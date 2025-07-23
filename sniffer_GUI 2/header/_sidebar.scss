@@ -1,0 +1,40 @@
+#sidebar {
+  bottom: 0;
+  left: 0;
+  position: absolute;
+  top: 68px;
+  width: 40px;
+  overflow: hidden;
+  background: #D8D8D8;
+  border-right: 1px solid $se_darkGrey;
+  box-sizing: border-box;
+
+  .sidebarList {
+    list-style-type: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .sidebarItem {
+    display: block;
+    color: $se_darkGrey;
+    overflow: hidden;
+    text-align: center;
+    font-size: 1.75em;
+    height:40px;
+    width:40px;
+    line-height:40px;
+    &:hover{
+      color: $se_darkerGrey;
+    }
+  }
+}
+
+#footer {
+  .footer{
+    position:fixed;
+    bottom:0;
+    right:0;
+    height: 2em;
+  }
+}

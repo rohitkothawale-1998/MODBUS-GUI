@@ -1,0 +1,43 @@
+{
+  "links": [
+    {
+      "ieee_address": "00124b00027426ee", 
+      "parent_ieee_address": "00124b00027426ee", 
+      "rssi": "-46"
+    }, 
+    {
+      "ieee_address": "00c0b700008273e3", 
+      "parent_ieee_address": "00124b00027426ee", 
+      "rssi": "-47"
+    }
+  ], 
+  "nodes": [
+    {
+      "deviceType": "0", 
+      "deviceUptime": "0", 
+      "ieee_address": "00c0b700008c83a7", 
+      "packetLoss": "0", 
+      "retryCounter": "0", 
+      "shortAddress": "0000", 
+      "workingMemory": "0"
+    }, 
+    {
+      "deviceType": "00", 
+      "deviceUptime": "0000039a", 
+      "ieee_address": "00124b00027426ee", 
+      "packetLoss": "0000", 
+      "retryCounter": "0000", 
+      "shortAddress": "0000", 
+      "workingMemory": "06c7"
+    }, 
+    {
+      "deviceType": "02", 
+      "deviceUptime": "000003be", 
+      "ieee_address": "00c0b700008273e3", 
+      "packetLoss": "0000", 
+      "retryCounter": "0000", 
+      "shortAddress": "01b1", 
+      "workingMemory": "06c6"
+    }
+  ]
+}

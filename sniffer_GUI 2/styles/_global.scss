@@ -1,0 +1,229 @@
+.node {
+  stroke: #fff;
+  stroke-width: 1.5px;
+}
+
+.link {
+  fill: none;
+  stroke: #bbb;
+}
+
+html{
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  font-size: small;
+  font-weight: normal;
+}
+
+// *{
+//   box-sizing: border-box;
+// }
+
+body {
+  margin: 0px;
+  min-height: 100%;
+  width: 100%;
+  min-width: 910px;
+  font-family: $fontFamily;
+  font-size: small;
+  color: $se_darkGrey;
+  background: #f0f0f0;
+  font-weight: normal;
+}
+
+svg{
+  position:relative;
+  top:0;
+  right:0;
+  width:100%;
+}
+
+.se-diagram{
+  position:relative;
+}
+
+h1{
+  padding:.75em 0 0 0;
+  margin: 0;
+  color: $se_darkerGrey;
+  font-family: open_sanssemibold;
+  font-size: 1.75em;
+  line-height: 1em;
+}
+
+h2 {
+  margin:0;
+  padding: 1em 0 0 0;
+  font-size: 1.125em;
+  line-height: 1em;
+  color: $se_darkerGrey;
+  font-family: open_sanssemibold;
+  text-transform: uppercase;
+  font-weight: normal;
+}
+
+td {
+  padding: .25em 1em .25em 0;
+  vertical-align: middle;
+}
+
+table{
+  border-spacing: 0;
+  border-collapse: separate;
+}
+
+.emphasis{
+  color: $app_modulesBlue;
+}
+
+.boldEmphasis{
+  @extend .emphasis;
+  font-family: open_sansbold;
+}
+
+.contentsWrapper{
+//  @include span-columns(12);
+  border-left: 39px solid #D8D8D8;
+}
+
+.contents{
+//  @include span-columns(12);
+  border-left: 1px solid #808080;
+//  max-width: 1024px;
+//  min-width: 800px;
+}
+
+.featureContent{
+  padding: 0 2rem 2rem 2rem;
+}
+
+.sectiontitle{
+  font-size:1.2em;
+  margin:.5em;
+}
+
+#oneline-wrapper {
+  position:relative; width:863px; height:471px;
+  padding:5px;
+  border:1px solid #2B64A8;
+  /*margin:0 auto*/
+  margin:.5em;
+}
+#oneline {
+  position:absolute;
+  background:white;
+}
+#oneline-outer-wrapper{
+  background-color:white;
+
+  width:100%;
+}
+
+.fluidContentBox {
+  background-color: #FFFFFF;
+  border-radius: 5px;
+  box-shadow: inset 1px 1px 1px $se_lightGrey;
+  overflow: hidden;
+  margin: 1em 0 0 0;
+  padding: 1em 1.5em;
+}
+
+.contentBox {
+  @extend .fluidContentBox;
+  h2{
+    @extend .boldEmphasis;
+  }
+  h3 {
+    color: $app_modulesBlue;
+    font-size: 1.125rem;
+    line-height: 1.125rem;
+    margin: 0.5rem 0em;
+  }
+
+}
+
+input[type="text"], input[type="password"]{
+  border: 1px solid $se_lightGrey;
+  border-radius:5px;
+  font-family: $fontFamily;
+  line-height:2em;
+  height:2em;
+  margin: .25em 0;
+  padding: 0 .25em;
+}
+
+input[type="radio"]{
+  vertical-align: text-top;
+  margin-right: .5em;
+}
+
+button {
+  border : 0px;
+  border-radius:5px;
+  color: #FFFFFF;
+  background-color: $app_modulesBlue;
+  cursor: pointer;
+  outline: none;
+  height:2em;
+  line-height:2em;
+  font-family: open_sanssemibold;
+
+  &:disabled{
+    background-color: $se_mediumGrey;
+    cursor: default;
+  }
+
+}
+
+
+.keyPadding {
+  padding: .25em 1em .25em 0;
+  line-height: 2.5em;
+  //  vertical-align: middle;
+//  display: inline-block;
+}
+
+
+.valuePadding {
+  padding: .25em 2em .25em 0;
+  line-height: 2.5em;
+  //  vertical-align: middle;
+//  display: inline-block;
+}
+
+.statusValue {
+  font-size: small;
+  font-family: $fontFamily;
+  background-color: $app_modulesBlue;
+  color: white;
+  padding: 0.5em;
+  text-transform: uppercase;
+  display: inline-block;
+  vertical-align: bottom;
+  margin-bottom: 0.2em;
+  line-height: 1em;
+}
+
+.h3Header {
+  border-bottom: 1px solid $app_lightBorder;
+  margin-bottom: 1em;
+}
+
+//.allcols, .onecols{
+//  @include span-columns(12);
+//}
+//
+//.halfcols, .twocols{
+//  @include span-columns(6);
+//}
+//
+//.thirdcols, .threecols{
+//  @include span-columns(4);
+//}
+//
+//.quartercols, .fourcols{
+//  @include span-columns(3);
+//}
+
+

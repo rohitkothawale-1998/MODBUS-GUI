@@ -1,0 +1,25 @@
+import struct
+record_format = '<10sHH38sI8s'
+input = open("C4f4-1104-0001231E.zigbee",'rb')
+def readall():
+    while 1:
+        record = input.read(struct.calcsize(record_format))
+        if record == '':
+            input.close()
+            break
+        result_list=struct.unpack(record_format, record)
+        print result_list
+
+def pick(offset, size, f):
+    input.read(offset)
+    record = input.read(size)
+    return record
+
+result_list= []
+result_list= struct.unpack(record_format, pick(0,64,input)) 
+
+print(struct.unpack(record_format, pick(2*65536, 64, input)))
+print "Version is:", hex(result_list[1])
+print "pkgversion is:", hex(result_list[2])
+print "File size is:", result_list[4]
+

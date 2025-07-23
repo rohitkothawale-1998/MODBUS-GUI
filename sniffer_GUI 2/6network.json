@@ -1,0 +1,62 @@
+{
+  "links": [
+    {
+      "ieee_address": "00124b00022ecd43", 
+      "parent_ieee_address": "00124b00022ecd0e", 
+      "rssi": "-43"
+    }, 
+    {
+      "ieee_address": "00c0b700008c83a6", 
+      "parent_ieee_address": "00124b00022ecd43", 
+      "rssi": "-50"
+    }, 
+    {
+      "ieee_address": "00124b00022ecd1f", 
+      "parent_ieee_address": "00124b00022ecd1f", 
+      "rssi": "-51"
+    }, 
+    {
+      "ieee_address": "00124b00022ecd0e", 
+      "parent_ieee_address": "00124b00022ecd1f", 
+      "rssi": "-51"
+    }
+  ], 
+  "nodes": [
+    {
+      "deviceType": "01", 
+      "deviceUptime": "00000171", 
+      "ieee_address": "00124b00022ecd43", 
+      "packetLoss": "0000", 
+      "retryCounter": "0000", 
+      "shortAddress": "4c35", 
+      "workingMemory": "06ef"
+    }, 
+    {
+      "deviceType": "01", 
+      "deviceUptime": "00000171", 
+      "ieee_address": "00c0b700008c83a6", 
+      "packetLoss": "0000", 
+      "retryCounter": "0000", 
+      "shortAddress": "0a85", 
+      "workingMemory": "0707"
+    }, 
+    {
+      "deviceType": "00", 
+      "deviceUptime": "54dbc19b", 
+      "ieee_address": "00124b00022ecd1f", 
+      "packetLoss": "0000", 
+      "retryCounter": "0000", 
+      "shortAddress": "0000", 
+      "workingMemory": "06c9"
+    }, 
+    {
+      "deviceType": "01", 
+      "deviceUptime": "00000530", 
+      "ieee_address": "00124b00022ecd0e", 
+      "packetLoss": "0000", 
+      "retryCounter": "0000", 
+      "shortAddress": "3459", 
+      "workingMemory": "07b8"
+    }
+  ]
+}

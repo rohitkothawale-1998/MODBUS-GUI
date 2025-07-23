@@ -1,0 +1,38 @@
+{
+  "links": [
+    {
+      "ieee_address": "00c0b700008273e3", 
+      "parent_ieee_address": "00124b00027426ee", 
+      "rssi": "-47"
+    }
+  ], 
+  "nodes": [
+    {
+      "deviceType": "0", 
+      "deviceUptime": "0", 
+      "ieee_address": "00c0b700008c83a7", 
+      "packetLoss": "0", 
+      "retryCounter": "0", 
+      "shortAddress": "0000", 
+      "workingMemory": "0"
+    }, 
+    {
+      "deviceType": "02", 
+      "deviceUptime": "0000030a", 
+      "ieee_address": "00c0b700008273e3", 
+      "packetLoss": "0000", 
+      "retryCounter": "0000", 
+      "shortAddress": "01b1", 
+      "workingMemory": "06c6"
+    }, 
+    {
+      "deviceType": "3", 
+      "deviceUptime": "0", 
+      "ieee_address": "00124b00027426ee", 
+      "packetLoss": "ffff", 
+      "retryCounter": "ffff", 
+      "shortAddress": "ffff", 
+      "workingMemory": "ffff"
+    }
+  ]
+}

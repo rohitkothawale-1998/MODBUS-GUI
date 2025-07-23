@@ -1,0 +1,76 @@
+/*
+ * This file is intended to contain Schneider Electric reusable style fragments and variables
+ * in the form of variables and mixin.  This file should not contain any actual style classes.
+ * Items here should be named by their appearance, not by their function.  Functional pieces should
+ * be defined in se_style_definitions.css.  This ensures that reusable themes can be defined here, but
+ * referenced by the definitions in se_style_definitions.  In this way we can either change the base
+ * styles, or the styles intended only to serve a single function.
+ */
+
+// Schneider Electric Corporate Font
+//$fontFamily: Arial Rounded, Arial Unicode MS, Arial, Helvetica, sans-serif;
+$fontFamily: open_sansregular;
+$fontFamilyHeaderCondensed: OpenSans-CondensedBold;
+
+// Schneider Electric Corporate Colors
+$se_lightGreen: #87D200;
+$se_mediumGreen: #4FA600;
+$se_spruceGreen: #009B3E;
+$se_darkGreen: #009530;
+$se_backgroundGrey: #C1C2C4;
+$se_lightestGrey: #F0F0F0;
+$se_lightGrey: #CACFCB;
+$se_mediumGrey: #A0A0A0;
+$se_darkGrey: #808080;
+$se_darkerGrey: #404040;
+$se_yellow: #FFDD00;
+$se_blue: #2FB4E9;
+$se_lightBlue: #2FB4E9;
+$se_fuschia: #C4014B;
+$se_lightOrange: #F4A100;
+$se_darkOrange: #EB5B25;
+
+$se_iconGreen: #4EA500;
+$se_iconBlue: #3FA9F5;
+$se_iconYellow: #FDD805;
+$se_iconRed: #ED1C24;
+
+// Application Specific Colors
+$app_selectionGrey: #EBEBEB;
+$app_selectionContentGrey: #979797;
+$app_errorText: #FF0000;
+$app_selectionBlue: #7798BF;
+$app_selectionBlueFocused: #3a72b2;
+$app_wizardBlue: #0F7991;
+$app_lightBorder: #e0e0e0;
+$app_lightTableHover: #f6f6f6;
+$app_tableHoverBlue: #F3F7FB;
+$app_tagBlue: #D7E9F7;
+$app_modulesBlue: #3e769d;
+$app_loadingBlue: #8badc4;
+$app_mediumBlue: #799db7;
+
+//13px ~ 1em ~ small
+// Application Specific Font Sizes
+$app_fontSize: small;
+
+//main margins
+$left_right_margin: 1.5em;
+
+$se_fieldNameSpacing: 1em;
+
+$app_roundedCornersRadius: 8px;
+$app_roundedCornersRadiusSmall: 3px;
+
+$app_horizontalBarHeight: 2rem;
+$app_headerHeight: 5em;
+
+@mixin columnCount($count) {
+  column-count: $count;
+  -moz-column-count: $count;
+  -webkit-column-count: $count;
+}
+
+
+
+

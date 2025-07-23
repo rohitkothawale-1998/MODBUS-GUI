@@ -1,0 +1,33 @@
+<div class="sideBySide">
+  <div class="emphasis keyPadding">Device Type:</div>
+  <div class="emphasis keyPadding">Extended Address:</div>
+  <div class="emphasis keyPadding">Short Address:</div>
+  <div class="emphasis keyPadding">Memory Usage:</div>
+  <div class="emphasis keyPadding">Memory Percentage:</div>
+  <div class="emphasis keyPadding">Device Uptime:</div>
+  <div class="emphasis keyPadding">Packet Loss:</div>
+  <div class="emphasis keyPadding">Retry Counter:</div>
+  <div class="emphasis keyPadding">Hop Count:</div> 
+  <div class="emphasis keyPadding">Packet Time:</div>
+  <div class="emphasis keyPadding">Channel:</div>
+  <div class="emphasis keyPadding">SKU:</div> 
+  <div class="emphasis keyPadding">Firmware Version:</div>   
+</div>
+<div class="sideBySide">
+  <div class="valuePadding"> {{deviceType}}</div>  
+  <div class="valuePadding"> {{address}}</div>
+  <div class="valuePadding"> {{shortAddress}}</div>
+  <div class="valuePadding"> {{memory}}  {{memory === "-" ? " " : "bytes"}}</div>
+  <div class="valuePadding"> {{memoryPercent | number:0 }} {{memory === "-" ? "-" : "%"}}
+    <img src="/images/critical.png" style="vertical-align: text-bottom" ng-if="memoryPercent >= 80">
+    <img src="/images/warning.png" style="vertical-align: text-bottom" ng-if="memoryPercent >= 60 && memoryPercent <= 80">
+  </div>
+  <div class="valuePadding"> {{uptime}} {{uptime === "-" ? " " : "seconds"}}</div>
+  <div class="valuePadding"> {{packetLoss}}</div>
+  <div class="valuePadding"> {{retries}}</div>
+  <div class="valuePadding"> {{hopcount}}</div> 
+  <div class="valuePadding"> {{laptime}}</div>
+  <div class="valuePadding"> {{channel}}</div>
+  <div class="valuePadding"> {{sku}}</div>  
+  <div class="valuePadding"> {{firmware}}</div>    
+</div>
