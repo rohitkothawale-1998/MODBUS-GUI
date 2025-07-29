@@ -153,7 +153,32 @@ ID_TERM         = wx.NewId()
 ID_COM_LIST     = wx.NewId()
 ID_EXIT         = wx.NewId()
 ID_HELP         = wx.NewId()
-ID_SEND_HOTSHOT	= wx.NewId()
+
+ID_READ_SERIAL_NUMBER	= wx.NewId()
+ID_READ_INVERTER_SN	= wx.NewId()
+ID_READ_PRODUCTION_DATE	= wx.NewId()
+ID_READ_FW	= wx.NewId()
+ID_READ_HW	= wx.NewId()
+ID_READ_MODEL_NUMBER	= wx.NewId()
+ID_READ_MANUFACTURER	= wx.NewId()
+ID_READ_AC_INPUT_VOLTAGE	= wx.NewId()
+ID_READ_AC_INPUT_CURRENT	= wx.NewId()
+ID_READ_AC_INPUT_POWER	= wx.NewId()
+ID_READ_OUTPUT_ACTIVE_POWER	= wx.NewId()
+ID_READ_PV1_INPUT_POWER	= wx.NewId()
+ID_READ_PV2_INPUT_POWER	= wx.NewId()
+ID_READ_BATTERY_VOLTAGE	= wx.NewId()
+ID_READ_BATTERY_SOC	= wx.NewId()
+ID_READ_OUTPUT_FREQUENCY	= wx.NewId()
+ID_READ_DEVICE_TEMPERATURE	= wx.NewId()
+ID_READ_LINE_CHARGE_TOTAL	= wx.NewId()
+ID_READ_PV_GENERATION_TOTAL	= wx.NewId()
+ID_READ_LOAD_CONSUMPTION_TOTAL	= wx.NewId()
+ID_READ_BATTERY_CHARGE_TOTAL	= wx.NewId()
+ID_READ_BATTERY_DISCHARGE_TOTAL	= wx.NewId()
+ID_READ_FROM_GRID_TO_LOAD	= wx.NewId()
+ID_READ_OPERATION_HOURS	= wx.NewId()
+
 ID_SEND_STATUSREQ = wx.NewId()
 ID_SEND_SJOIN_ACCEPT = wx.NewId()
 ID_SEND_REMOVE_NODE = wx.NewId()
@@ -748,22 +773,32 @@ class seWSNMenubar(wx.Frame):
 
         #Tim's new send packet item
         send_menu = wx.Menu()
-        send_menu.Append(ID_SEND_HOTSHOT, "Get Serial Numbers", "", wx.ITEM_NORMAL)
-        send_menu.Append(ID_SEND_STATUSREQ, "Get Version Info", "", wx.ITEM_NORMAL)
-        send_menu.Append(ID_SEND_SJOIN_ACCEPT, "Get Production Date", "", wx.ITEM_NORMAL)
-        send_menu.Append(ID_SEND_REMOVE_NODE, "Get All Manufacturing Data", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_SERIAL_NUMBER, "Get Serial Numbers", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_INVERTER_SN, "Get INVERTER SN", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_PRODUCTION_DATE, "Get Production Date", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_FW, "Get Firmware Version", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_HW, "Get Hardware Version", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_MODEL_NUMBER, "Get Model Number", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_MANUFACTURER, "Get Manufcturer", "", wx.ITEM_NORMAL)
         send_menu.AppendSeparator()
-        send_menu.Append(ID_SEND_TIME_RESP, "Get Energy Totals", "", wx.ITEM_NORMAL)
-        send_menu.Append(ID_SEND_QNP_RESP, "Get Operation Stats", "", wx.ITEM_NORMAL)
-        send_menu.Append(ID_SEND_PE_RESP, "Get All Lifetime Data", "", wx.ITEM_NORMAL)
-        send_menu.Append(ID_SEND_RMT_CMD, "Send Remote C&ommand", "", wx.ITEM_NORMAL)
-        send_menu.Append(ID_SEND_COLDSHOT, "Send &ColdShot", "", wx.ITEM_NORMAL)
-        #send_menu.Append(ID_SEND_RDNTHOTSHOT, "&Send RDNT HotShot", "", wx.ITEM_NORMAL)
-        #send_menu.Append(ID_SEND_RDNTCOLDSHOT, "&Send RDNT ColdShot", "", wx.ITEM_NORMAL)
-        send_menu.Append(ID_SEND_PKGNOTIFY_USB, "&Send 1104 PKGNOTIFY", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_AC_INPUT_VOLTAGE, "Get AC Input Voltage", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_AC_INPUT_CURRENT, "Get AC Input Current", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_AC_INPUT_POWER, "Get AC Input Power", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_OUTPUT_ACTIVE_POWER, "Get Output Active Power", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_PV1_INPUT_POWER, "Get PV1 Input Power", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_PV2_INPUT_POWER, "Get PV2 Input Power", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_BATTERY_VOLTAGE, "Get Battery Voltage", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_BATTERY_SOC, "Get Battery SOC", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_OUTPUT_FREQUENCY, "Get Output Frequency", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_DEVICE_TEMPERATURE, "Get Device Temperature", "", wx.ITEM_NORMAL)
         send_menu.AppendSeparator()
-        send_menu.Append(ID_SEND_PKGNOTIFY_MINI, "&Send 1102 PKGNOTIFY", "", wx.ITEM_NORMAL)
-        send_menu.Append(ID_SEND_PKGNOTIFY_SP180, "&Send 1101 PKGNOTIFY", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_LINE_CHARGE_TOTAL, "Get Line Charge Total", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_PV_GENERATION_TOTAL, "Get PV Generation Total", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_LOAD_CONSUMPTION_TOTAL, "Get Load Consumption Total", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_BATTERY_CHARGE_TOTAL, "Get Battery Charge Total", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_BATTERY_DISCHARGE_TOTAL, "Get Battery Discharge Total", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_FROM_GRID_TO_LOAD, "Get From Grid To Load", "", wx.ITEM_NORMAL)
+        send_menu.Append(ID_READ_OPERATION_HOURS, "Get Operation Hours", "", wx.ITEM_NORMAL)
         parent.seWSNView_menubar.Append(send_menu, "&Send")
 
         help_menu = wx.Menu()
@@ -790,8 +825,6 @@ class seWSNToolbar(wx.Frame):
         parent.Bind(wx.EVT_MENU, parent.OnClear, tool8)
         tool10 = toolbar2.AddSimpleTool(-1, wx.Bitmap('edit_16x16.png'), "Edit", "Open Commission List File for Editing")
         parent.Bind(wx.EVT_MENU, parent.OnConfigFileSelect, tool10)
-        tool12 = toolbar2.AddSimpleTool(-1, wx.Bitmap('undo.png'), "Hot Shot", "Make connected device a Coordinator")
-        parent.Bind(wx.EVT_MENU, parent.OnSendHotShot, tool12)
         toolbar2.AddSeparator()
         tool11 = toolbar2.AddSimpleTool(-1, wx.Bitmap('dbgpause.png'), "Pause", "Pause the Terminal display")
         parent.Bind(wx.EVT_MENU, parent.OnPause, tool11)
@@ -1113,17 +1146,17 @@ class PageTerminalView(wx.Panel):
 
 
 class seWSNViewLayout(wx.Frame):
-   pageTerminal = None
-   pageNetMon = None
-   pageMFG = None
-   pageTopo = None
-   tb = None
-   global openJoin
-   global gmaxsize
-   global gtotalBlocks
+    pageTerminal = None
+    pageNetMon = None
+    pageMFG = None
+    pageTopo = None
+    tb = None
+    global openJoin
+    global gmaxsize
+    global gtotalBlocks
 
-   # constructor for the toplevel layout
-   def __init__(self, *args, **kwds):
+    # constructor for the toplevel layout
+    def __init__(self, *args, **kwds):
       global pageTerminal
       global pageNetMon
       global pageTopo
@@ -1195,11 +1228,11 @@ class seWSNViewLayout(wx.Frame):
       self.Bind(wx.EVT_TIMER, self.UpdateGaugeDisplay)
       self.timer.Start(5000)
 
-   def __set_properties(self):
+    def __set_properties(self):
       self.SetTitle("SE Wireless Development Tool")
       self.SetSize((1300, 900))
 
-   def __attach_events(self):
+    def __attach_events(self):
       global pageNetMon
       #register events at the controls
       self.Bind(wx.EVT_MENU, self.OnClear, id = ID_CLEAR)
@@ -1208,7 +1241,32 @@ class seWSNViewLayout(wx.Frame):
       self.Bind(wx.EVT_MENU, self.OnPortSettings, id = ID_SETTINGS)
       self.Bind(wx.EVT_MENU, self.OnTermSettings, id = ID_TERM)
       self.Bind(wx.EVT_MENU, self.OnConfigFileSelect, id = ID_COM_LIST)
-      self.Bind(wx.EVT_MENU, self.OnSendHotShot, id = ID_SEND_HOTSHOT)
+      
+      self.Bind(wx.EVT_MENU, self.OnReadSerialNumber, id = ID_READ_SERIAL_NUMBER)
+      self.Bind(wx.EVT_MENU, self.OnReadInverterSN, id = ID_READ_INVERTER_SN)
+      self.Bind(wx.EVT_MENU, self.OnReadProductionDate, id = ID_READ_PRODUCTION_DATE)
+      self.Bind(wx.EVT_MENU, self.OnReadFW, id = ID_READ_FW)
+      self.Bind(wx.EVT_MENU, self.OnReadHW, id = ID_READ_HW)
+      self.Bind(wx.EVT_MENU, self.OnReadModelNumber, id = ID_READ_MODEL_NUMBER)
+      self.Bind(wx.EVT_MENU, self.OnReadManufacturer, id = ID_READ_MANUFACTURER)
+      self.Bind(wx.EVT_MENU, self.OnReadACInputVoltage, id = ID_READ_AC_INPUT_VOLTAGE)
+      self.Bind(wx.EVT_MENU, self.OnReadACInputCurrent, id = ID_READ_AC_INPUT_CURRENT)
+      self.Bind(wx.EVT_MENU, self.OnReadACInputPower, id = ID_READ_AC_INPUT_POWER)
+      self.Bind(wx.EVT_MENU, self.OnReadOutputActivePower, id = ID_READ_OUTPUT_ACTIVE_POWER)
+      self.Bind(wx.EVT_MENU, self.OnReadPV1InputPower, id = ID_READ_PV1_INPUT_POWER)
+      self.Bind(wx.EVT_MENU, self.OnReadPV2InputPower, id = ID_READ_PV2_INPUT_POWER)
+      self.Bind(wx.EVT_MENU, self.OnReadBatteryVoltage, id = ID_READ_BATTERY_VOLTAGE)
+      self.Bind(wx.EVT_MENU, self.OnReadBatterySOC, id = ID_READ_BATTERY_SOC)
+      self.Bind(wx.EVT_MENU, self.OnReadOutputFrequency, id = ID_READ_OUTPUT_FREQUENCY)
+      self.Bind(wx.EVT_MENU, self.OnReadDeviceTemperature, id = ID_READ_DEVICE_TEMPERATURE)
+      self.Bind(wx.EVT_MENU, self.OnReadLineChargeTotal, id = ID_READ_LINE_CHARGE_TOTAL)
+      self.Bind(wx.EVT_MENU, self.OnReadPVGenerationTotal, id = ID_READ_PV_GENERATION_TOTAL)
+      self.Bind(wx.EVT_MENU, self.OnReadLoadConsumptionTotal, id = ID_READ_LOAD_CONSUMPTION_TOTAL)
+      self.Bind(wx.EVT_MENU, self.OnReadBatteryChargeTotal, id = ID_READ_BATTERY_CHARGE_TOTAL)
+      self.Bind(wx.EVT_MENU, self.OnReadBatteryDischargeTotal, id = ID_READ_BATTERY_DISCHARGE_TOTAL)
+      self.Bind(wx.EVT_MENU, self.OnReadFromGridToLoad, id = ID_READ_FROM_GRID_TO_LOAD)
+      self.Bind(wx.EVT_MENU, self.OnReadOperationHours, id = ID_READ_OPERATION_HOURS)
+      
       self.Bind(wx.EVT_MENU, self.OnSendStatusReq, id = ID_SEND_STATUSREQ)
       self.Bind(wx.EVT_MENU, self.OnSendSJoinAccept, id = ID_SEND_SJOIN_ACCEPT)
       self.Bind(wx.EVT_MENU, self.OnSendRemoveNode, id = ID_SEND_REMOVE_NODE)
@@ -1231,10 +1289,10 @@ class seWSNViewLayout(wx.Frame):
       #pageTopo.topobutton.Bind(wx.EVT_BUTTON, self.OnStartTopoView, id = pageTopo.topobutton.GetId())
       self.Bind(EVT_SERIALRX, self.OnSerialRead)
 
-   def checksum(self, s):
+    def checksum(self, s):
       return pack('B', sum(unpack(str(str(len(s))+"B"), s))%256)
 
-   def debug_print(self, message, data=None):
+    def debug_print(self, message, data=None):
       """Print debug information when verbose mode is enabled.
       
       Args:
@@ -1248,28 +1306,28 @@ class seWSNViewLayout(wx.Frame):
                   data = data.encode()
               print("  HEX: {}".format(data.hex()))
               
-   def StartThread(self):
+    def StartThread(self):
       """Start the receiver thread"""
       self.thread = threading.Thread(target=self.ComPortArgusThread)
       self.thread.setDaemon(1)
       self.alive.set()
       self.thread.start()
 
-   def StopThread(self):
+    def StopThread(self):
       """Stop the receiver thread, wait util it's finished."""
       if self.thread is not None:
          self.alive.clear()          #clear alive event for thread
          self.thread.join()          #wait until thread has finished
          self.thread = None
 
-   def is_port_open(self):
+    def is_port_open(self):
       """Check if the serial port is open and available."""
       try:
          return hasattr(self, 'serial') and self.serial and self.serial.is_open
       except:
          return False
 
-   def safe_write(self, data):
+    def safe_write(self, data):
       """Safely write data to the serial port with error handling."""
       if not self.is_port_open():
          wx.MessageBox("Serial port is not open", "Error", wx.OK | wx.ICON_ERROR)
@@ -1282,7 +1340,7 @@ class seWSNViewLayout(wx.Frame):
          wx.MessageBox("Error writing to serial port: {}".format(str(e)), "Error", wx.OK | wx.ICON_ERROR)
          return False
 
-   def safe_read(self, size=1):
+    def safe_read(self, size=1):
       """Safely read data from the serial port with error handling."""
       if not self.is_port_open():
          return None
@@ -1292,7 +1350,7 @@ class seWSNViewLayout(wx.Frame):
          wx.MessageBox("Error reading from serial port: {}".format(str(e)), "Error", wx.OK | wx.ICON_ERROR)
          return None
 
-   def OnPortSettings(self, event=None):
+    def OnPortSettings(self, event=None):
       """Handle port settings with improved error handling."""
       try:
          dlg = wxSerialConfigDialog.SerialConfigDialog(self, -1, "", 
@@ -1321,11 +1379,11 @@ class seWSNViewLayout(wx.Frame):
       except Exception as e:
          wx.MessageBox("Error in port settings: {}".format(str(e)), "Error", wx.OK | wx.ICON_ERROR)
 
-   def OnPause(self, event=None):
+    def OnPause(self, event=None):
       global terminalPaused
       terminalPaused = True
 
-   def OnPlay(self, event=None):
+    def OnPlay(self, event=None):
       global terminalBuffer
       global terminalPaused
       for eachLine in terminalBuffer:
@@ -1337,7 +1395,7 @@ class seWSNViewLayout(wx.Frame):
    #   global pageTopo
    #   pageTopo.browser.Reload()
 
-   def OnStartTopoView(self, event=None):
+    def OnStartTopoView(self, event=None):
       pid = subprocess.Popen(['python', '-m', 'SimpleHTTPServer', '80']).pid
       if sys.platform.startswith('win'):
 
@@ -1352,54 +1410,54 @@ class seWSNViewLayout(wx.Frame):
 
          raise EnvironmentError('Unsupported platform')
 
-   def OnFeatureNotImp(self, event=None):
+    def OnFeatureNotImp(self, event=None):
       """Feature not implemented. Show the settings dialog
          with the current commission list settings"""
       dialog = FeatureNotImplementedDialog(None, -1, "", settings=self.settings)
       result = dialog.ShowModal()
       dialog.Destroy()
 
-   def OnOTAFileSelect(self, event=None):
+    def OnOTAFileSelect(self, event=None):
       """Tool point OTA File Selector. Show the settings dialog
          with the current commission list settings"""
       dialog = OTAFileDialog(None, -1, "", settings=self.settings)
       result = dialog.ShowModal()
       dialog.Destroy()
 
-   def OnConfigFileSelect(self, event=None):
+    def OnConfigFileSelect(self, event=None):
       """Tool point Commission List Settings. Show the settings dialog
          with the current commission list settings"""
       dialog = ConfigFileDialog(None, -1, "", settings=self.settings)
       result = dialog.ShowModal()
       dialog.Destroy()
 
-   def OnCommissionList(self, event):
+    def OnCommissionList(self, event):
       """Tool point Commission List Settings. Show the settings dialog
          with the current commission list settings"""
       dialog = CommissionListDialog(None, -1, "", settings=self.settings)
       result = dialog.ShowModal()
       dialog.Destroy()
 
-   def OnRemoveList(self, event):
+    def OnRemoveList(self, event):
       """Tool point Remove List. Show the settings dialog
          with the current remove list options"""
       dialog = RemoveListDialog(None, -1, "", settings=self.settings)
       result = dialog.ShowModal()
       dialog.Destroy()
 
-   def OnTermSettings(self, event):
+    def OnTermSettings(self, event):
       """Menu point Terminal Settings. Show the settings dialog
          with the current terminal settings"""
       dialog = TerminalSettingsDialog(None, -1, "", settings=self.settings)
       result = dialog.ShowModal()
       dialog.Destroy()
 
-   def OnExit(self, event):
+    def OnExit(self, event):
       """Menu point Exit"""
       # Just call OnClose to handle the exit
       self.Close()
 
-   def OnClose(self, event):
+    def OnClose(self, event):
       """Called on application shutdown."""
       global outfile
       global temperaturefile
@@ -1432,7 +1490,7 @@ class seWSNViewLayout(wx.Frame):
       import os
       os._exit(0)
 
-   def OnSaveAs(self, event):
+    def OnSaveAs(self, event):
       """Save contents of output window."""
       filename = None
       dlg = wx.FileDialog(None, "Save Text As...", "log", "", "Text File|*.txt|All Files|*",  wx.SAVE)
@@ -1449,7 +1507,7 @@ class seWSNViewLayout(wx.Frame):
          f.write(text)
          f.close()
 
-   def OnClear(self, event):
+    def OnClear(self, event):
       global pageTerminal
       global pageNetMon
       global orphanList
@@ -1511,7 +1569,7 @@ class seWSNViewLayout(wx.Frame):
       #pageNetMon.filevertxc.Clear()
       #self.OnSendStatusReq(None)
 
-   def UpdatePageTerminal(self, outputstr):
+    def UpdatePageTerminal(self, outputstr):
       global terminalBuffer
       global terminalPaused
       if terminalPaused:
@@ -1519,26 +1577,239 @@ class seWSNViewLayout(wx.Frame):
       else:
          pageTerminal.text_ctrl_output.AppendText(outputstr)
 
-   def OnSendHotShot(self, event):
-      """Send HotShot command with improved error handling."""
-      HotShot = (0xFE, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x03)
-      if self.safe_write(bytes(HotShot)):
-         self.UpdatePageTerminal("HotShot command sent\n")
+    #Device Data Event Handlers
+    def OnReadSerialNumber(self, event):
+        """Read device serial number."""
+        # Address: 0xC780, Length: 15, Type: ASCII
+        read_cmd = (0x01, 0x03, 0xC7, 0x80, 0x00, 0x0F)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Serial # (0xC780)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Serial # read command\n")
 
-   def OnSendStatusReq(self, event):
+    def OnReadInverterSN(self, event):
+        """Read inverter serial number."""
+        # Address: 0xC78F, Length: 10, Type: ASCII
+        read_cmd = (0x01, 0x03, 0xC7, 0x8F, 0x00, 0x0A)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Inverter SN (0xC78F)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Inverter SN read command\n")
+
+    def OnReadProductionDate(self, event):
+        """Read production date."""
+        # Address: 0xC7A0, Length: 4, Type: ASCII
+        read_cmd = (0x01, 0x03, 0xC7, 0xA0, 0x00, 0x04)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Production Date (0xC7A0)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Production Date read command\n")
+
+    def OnReadFW(self, event):
+        """Read firmware version."""
+        # Address: 0xC783, Length: 1, Type: u16
+        read_cmd = (0x01, 0x03, 0xC7, 0x83, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Firmware Version (0xC783)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Firmware Version read command\n")
+
+    def OnReadHW(self, event):
+        """Read hardware version."""
+        # Address: 0xC784, Length: 1, Type: u16
+        read_cmd = (0x01, 0x03, 0xC7, 0x84, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Hardware Version (0xC784)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Hardware Version read command\n")
+
+    def OnReadModelNumber(self, event):
+        """Read model number."""
+        # Address: 0xC785, Length: 1, Type: u16
+        read_cmd = (0x01, 0x03, 0xC7, 0x85, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Model Number (0xC785)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Model Number read command\n")
+
+    def OnReadManufacturer(self, event):
+        """Read manufacturer."""
+        # Address: 0xC786, Length: 1, Type: u16
+        read_cmd = (0x01, 0x03, 0xC7, 0x86, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Manufacturer (0xC786)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Manufacturer read command\n")
+
+
+    #Runtime Data Event Handler
+    def OnReadACInputVoltage(self, event):
+        """Read AC Input Voltage (0x756A)."""
+        read_cmd = (0x01, 0x03, 0x75, 0x6A, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for AC Input Voltage (0x756A)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send AC Input Voltage read command\n")
+
+    def OnReadACInputCurrent(self, event):
+        """Read AC Input Current (0x756B)."""
+        read_cmd = (0x01, 0x03, 0x75, 0x6B, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for AC Input Current (0x756B)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send AC Input Current read command\n")
+
+    def OnReadACInputPower(self, event):
+        """Read AC Input Power (0x7571)."""
+        read_cmd = (0x01, 0x03, 0x75, 0x71, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for AC Input Power (0x7571)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send AC Input Power read command\n")
+
+    def OnReadOutputActivePower(self, event):
+        """Read Output Active Power (0x755E)."""
+        read_cmd = (0x01, 0x03, 0x75, 0x5E, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Output Active Power (0x755E)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Output Active Power read command\n")
+
+    def OnReadPV1InputPower(self, event):
+        """Read PV1 Input Power (0x7540)."""
+        read_cmd = (0x01, 0x03, 0x75, 0x40, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for PV1 Input Power (0x7540)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send PV1 Input Power read command\n")
+
+    def OnReadPV2InputPower(self, event):
+        """Read PV2 Input Power (0x753D)."""
+        read_cmd = (0x01, 0x03, 0x75, 0x3D, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for PV2 Input Power (0x753D)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send PV2 Input Power read command\n")
+
+    def OnReadBatteryVoltage(self, event):
+        """Read Battery Voltage (0x7530)."""
+        read_cmd = (0x01, 0x03, 0x75, 0x30, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Battery Voltage (0x7530)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Battery Voltage read command\n")
+
+    def OnReadBatterySOC(self, event):
+        """Read Battery State of Charge (0x7532)."""
+        read_cmd = (0x01, 0x03, 0x75, 0x32, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Battery SOC (0x7532)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Battery SOC read command\n")
+
+    def OnReadOutputFrequency(self, event):
+        """Read Output Frequency (0x754A)."""
+        read_cmd = (0x01, 0x03, 0x75, 0x4A, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Output Frequency (0x754A)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Output Frequency read command\n")
+
+    def OnReadDeviceTemperature(self, event):
+        """Read Device Temperature (0x7579)."""
+        read_cmd = (0x01, 0x03, 0x75, 0x79, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Device Temperature (0x7579)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Device Temperature read command\n")
+
+
+    #Summary Data Event Handlers
+    def OnReadLineChargeTotal(self, event):
+        """Read Line Charge Total (0xCB61, 2 registers)."""
+        read_cmd = (0x01, 0x03, 0xCB, 0x61, 0x00, 0x02)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Line Charge Total (0xCB61)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Line Charge Total read command\n")
+
+    def OnReadPVGenerationTotal(self, event):
+        """Read PV Generation Total (0xCB56, 2 registers)."""
+        read_cmd = (0x01, 0x03, 0xCB, 0x56, 0x00, 0x02)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for PV Generation Total (0xCB56)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send PV Generation Total read command\n")
+
+    def OnReadLoadConsumptionTotal(self, event):
+        """Read Load Consumption Total (0xCB58, 2 registers)."""
+        read_cmd = (0x01, 0x03, 0xCB, 0x58, 0x00, 0x02)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Load Consumption Total (0xCB58)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Load Consumption Total read command\n")
+
+    def OnReadBatteryChargeTotal(self, event):
+        """Read Battery Charge Total (0xCB52, 2 registers)."""
+        read_cmd = (0x01, 0x03, 0xCB, 0x52, 0x00, 0x02)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Battery Charge Total (0xCB52)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Battery Charge Total read command\n")
+
+    def OnReadBatteryDischargeTotal(self, event):
+        """Read Battery Discharge Total (0xCB54, 2 registers)."""
+        read_cmd = (0x01, 0x03, 0xCB, 0x54, 0x00, 0x02)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Battery Discharge Total (0xCB54)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Battery Discharge Total read command\n")
+
+    def OnReadFromGridToLoad(self, event):
+        """Read From Grid To Load (0xCB63, 2 registers)."""
+        read_cmd = (0x01, 0x03, 0xCB, 0x63, 0x00, 0x02)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for From Grid To Load (0xCB63)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send From Grid To Load read command\n")
+
+    def OnReadOperationHours(self, event):
+        """Read Operation Hours (0xCBB0, 1 register)."""
+        read_cmd = (0x01, 0x03, 0xCB, 0xB0, 0x00, 0x01)
+        if self.safe_write(bytes(read_cmd)):
+            self.UpdatePageTerminal("Sent read command for Operation Hours (0xCBB0)\n")
+        else:
+            self.UpdatePageTerminal("Failed to send Operation Hours read command\n")
+
+
+
+
+
+
+
+
+
+
+
+        
+
+
+
+
+    def OnSendStatusReq(self, event):
       """Send Status Request command with improved error handling."""
-      StatusReq = (0xFE, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x01, 0x84)
-      if self.safe_write(bytes(StatusReq)):
+      Inverter = (0xFE, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x01, 0x84)
+      if self.safe_write(bytes(Inverter)):
          self.UpdatePageTerminal("Status Request command sent\n")
 
-   def OnSendListModify(self, event):
+    def OnSendListModify(self, event):
       #Commission List Modified command
-      ListMod = bytearray(b'\xFE\x01\x00\x00\x00\x00\x00\x00\x00\x00\x03\x01\x0E\x11')
-      if self.safe_write(ListMod):
+      ProductionDate = bytearray(b'\xFE\x01\x00\x00\x00\x00\x00\x00\x00\x00\x03\x01\x0E\x11')
+      if self.safe_write(ProductionDate):
          self.UpdatePageTerminal("\n ====> Commission List Modified \n")
          self.UpdatePageTerminal("\r\n")
 
-   def OnSendCriticalAck(self, event):
+    def OnSendCriticalAck(self, event):
       global hostTransID
       StatusReq = bytearray()
       StatusReq.extend(b'\xFE')  # header
@@ -1565,7 +1836,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal("\r\n")
          hostTransID += 1
 
-   def OnSendSJoinAccept(self, event):
+    def OnSendSJoinAccept(self, event):
       StatusReq = bytearray()
       StatusReq.extend(b'\xFE')  # header
       StatusReq.extend(b'\x0a')  # command length
@@ -1585,7 +1856,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal("\n ====> SJoin Granted\n")
          self.UpdatePageTerminal("\r\n")
 
-   def OnSendSJoinReject(self, event):
+    def OnSendSJoinReject(self, event):
       StatusReq = bytearray()
       StatusReq.extend(b'\xFE')  # header
       StatusReq.extend(b'\x0a')  # command length
@@ -1605,7 +1876,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal("\n ====> SJoin Rejected\n")
          self.UpdatePageTerminal("\r\n")
 
-   def OnSendTimeResponse(self, event):
+    def OnSendTimeResponse(self, event):
       StatusReq = bytearray()
       StatusReq.extend(b'\xFE')  # header
       StatusReq.extend(b'\x05')  # command length
@@ -1619,7 +1890,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal(StatusReq.hex())
          self.UpdatePageTerminal("\r\n")
 
-   def OnSendPEResponse(self, event):
+    def OnSendPEResponse(self, event):
       global tb
       switchTime = False
       StatusReq = bytearray()
@@ -1666,7 +1937,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal(StatusReq.hex())
          self.UpdatePageTerminal("\n")
 
-   def OnSendRMTCommand(self, event):
+    def OnSendRMTCommand(self, event):
       global pageNetMon
       global joinList
       StatusReq = bytearray()
@@ -1708,7 +1979,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal(StatusReq.hex())
          self.UpdatePageTerminal("\r\n")
 
-   def OnSendColdShot(self, event):
+    def OnSendColdShot(self, event):
       StatusReq = bytearray()
       StatusReq.extend(b'\xFE\x01\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x14')
       StatusReq.extend(self.checksum(bytes(StatusReq)))
@@ -1716,7 +1987,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal("\n ====> Send Cold Shot\n")
          self.UpdatePageTerminal("\r\n")
 
-   def OnSendRDNTHotShot(self, event):
+    def OnSendRDNTHotShot(self, event):
       StatusReq = bytearray()
       StatusReq.extend(b'\xFE\x01\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28')
       StatusReq.extend(self.checksum(bytes(StatusReq)))
@@ -1724,7 +1995,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal("\n ====> Send RDNT Hot Shot\n")
          self.UpdatePageTerminal("\n")
 
-   def OnSendRDNTColdShot(self, event):
+    def OnSendRDNTColdShot(self, event):
       StatusReq = bytearray()
       StatusReq.extend(b'\xFE\x01\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x29')
       StatusReq.extend(self.checksum(bytes(StatusReq)))
@@ -1732,7 +2003,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal("\n ====> Send RDNT Cold Shot\n")
          self.UpdatePageTerminal("\n")
 
-   def OnSendPKGNotify_USB(self, event):
+    def OnSendPKGNotify_USB(self, event):
       StatusReq = bytearray()
       StatusReq.extend(b'\xFE')  # header
       StatusReq.extend(b'\x05')  # command length
@@ -1746,7 +2017,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal("\n ====> Send USB Dongle PKG Notify\n")
          self.UpdatePageTerminal("\n")
 
-   def OnSendPKGNotify_MINI(self, event):
+    def OnSendPKGNotify_MINI(self, event):
       StatusReq = bytearray()
       StatusReq.extend(b'\xFE')  # header
       StatusReq.extend(b'\x05')  # command length
@@ -1760,7 +2031,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal("\n ====> Send MINI PKG Notify\n")
          self.UpdatePageTerminal("\n")
 
-   def OnSendPKGNotify_SP180(self, event):
+    def OnSendPKGNotify_SP180(self, event):
       StatusReq = bytearray()
       StatusReq.extend(b'\xFE')  # header
       StatusReq.extend(b'\x05')  # command length
@@ -1774,7 +2045,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal("\n ====> Send SP180 PKG Notify\n")
          self.UpdatePageTerminal("\n")
 
-   def OnSendPKGNotify(self, event):
+    def OnSendPKGNotify(self, event):
       global tb
       global gmaxsize
       global gtotalBlocks
@@ -1819,7 +2090,7 @@ class seWSNViewLayout(wx.Frame):
           self.UpdatePageTerminal("\n ====> Error in PKG Notify: {}\n".format(str(e)))
           self.UpdatePageTerminal("\n")
 
-   def OnSendPKGBlockResponse(self, event, pktype, offset, maxblksize, version, filename):
+    def OnSendPKGBlockResponse(self, event, pktype, offset, maxblksize, version, filename):
       StatusReq = bytearray()
       StatusReq.extend(b'\xFE')  # header
       StatusReq.extend(b'\x0f')  # command length
@@ -1847,7 +2118,7 @@ class seWSNViewLayout(wx.Frame):
       self.UpdatePageTerminal("\n")
 
 
-   def OnKey(self, event):
+    def OnKey(self, event):
       """Key event handler. if the key is in the ASCII range, write it to the serial port.
          Newline handling and local echo is also done here."""
       code = event.GetKeyCode()
@@ -1869,7 +2140,7 @@ class seWSNViewLayout(wx.Frame):
       else:
          print("Extra Key: {}".format(code))
 
-   def UpdateGaugeDisplay(self, event):
+    def UpdateGaugeDisplay(self, event):
       global pageNetMon
       global joinList
       for tmitem in joinList:
@@ -1914,7 +2185,7 @@ class seWSNViewLayout(wx.Frame):
             pageNetMon.sdptimertxc.Clear()
             pageNetMon.sdptimertxc.AppendText(str(selctedDeviceInList['laptime']))
 
-   def ADC_TempConversion(self, f_adc, dev_type, internal):
+    def ADC_TempConversion(self, f_adc, dev_type, internal):
       tempVal = 0
       iTemp = 0
       f_adc = (float(f_adc)/1000)
@@ -1932,7 +2203,7 @@ class seWSNViewLayout(wx.Frame):
             tempVal -= 2.0  #adjustment for self heating
       return tempVal*1.8+32
 
-   def ADC_TempConversionSMT(self, f_adc):
+    def ADC_TempConversionSMT(self, f_adc):
       tempVal = 0
       iTemp = 0
       f_adc = (float(f_adc)/1000)
@@ -1947,7 +2218,7 @@ class seWSNViewLayout(wx.Frame):
       tempVal = (iTemp / 10.0) #adjust to 10ths precision
       return tempVal*1.8+32
 
-   def calcHumidity(self, adc, temp):
+    def calcHumidity(self, adc, temp):
       h = ((float(adc)/2047) - 0.1515) / 0.00636
       h = h / (1.0546 - 0.00216*temp)
       if h >= 95:
@@ -1956,7 +2227,7 @@ class seWSNViewLayout(wx.Frame):
          h = 0
       return h
 
-   def UpdateStatusDisplay(self, event):
+    def UpdateStatusDisplay(self, event):
       global pageNetMon
       global joinList
       treeItem = pageNetMon.tree_ctrl.GetSelection()
@@ -2120,7 +2391,7 @@ class seWSNViewLayout(wx.Frame):
          pageNetMon.filevertxc.Clear()
          pageNetMon.filevertxc.AppendText(selctedDeviceInList['filever'])
 
-   def addDictToList(self, event):
+    def addDictToList(self, event):
       global joinList
       global packageid_holder
       global ManID_holder
@@ -2244,7 +2515,7 @@ class seWSNViewLayout(wx.Frame):
       jsonOUT.close()
       shutil.copyfile('network.json', 'data/network.json')
 
-   def addMacToList(self, event):
+    def addMacToList(self, event):
       global joinList
       newdeviceRec = {'ieee_address':0, 'sku':' ', 'serial':' ', 'mfgdate':' ', 'hwvers':' ', 'battery':' ', 'utctime':' ', 'laptime':0, 'manid':' ', 'status':' ',
              'packageid':' ', 'deviceType':' ', 'chan':' ', 'fwvers':' ', 'sdpvers':' ', 'transid':' ', 'rssi':' ',
@@ -2266,7 +2537,7 @@ class seWSNViewLayout(wx.Frame):
          jsonOUT.close()
          shutil.copyfile('network.json', 'data/network.json')
 
-   def addCoordToList(self, event):
+    def addCoordToList(self, event):
       global joinList
       for elems in joinList[0]:
          joinList[0][elems] = ' '
@@ -2278,7 +2549,7 @@ class seWSNViewLayout(wx.Frame):
       jsonOUT.close()
       shutil.copyfile('network.json', 'data/network.json')
 
-   def updateDictInList(self, event, packageid_holder, control_holder, pkgtype_holder, filever_holder, ManID_holder):
+    def updateDictInList(self, event, packageid_holder, control_holder, pkgtype_holder, filever_holder, ManID_holder):
       global joinList
 
       deviceInList = next((item for item in joinList if item["ieee_address"]==str(event.data['xA'][::-1].hex())),None)
@@ -2299,7 +2570,7 @@ class seWSNViewLayout(wx.Frame):
 # Update the current data structure with new information or add a new node.
 #
 #
-   def updateNDPInList(self, deviceType, deviceUptime, ieee_address, packetLoss, txCounter, shortAddress, workingMemory, 
+    def updateNDPInList(self, deviceType, deviceUptime, ieee_address, packetLoss, txCounter, shortAddress, workingMemory, 
                        parentIEEE, linkRssi, hopCount, blversion, packageid, rxLqi, txFailure):
       global joinList
       global deviceLinks
@@ -2358,7 +2629,7 @@ class seWSNViewLayout(wx.Frame):
          jsonOUT.close()
          shutil.copyfile('network.json', 'data/network.json')
 
-   def removeNodeInformation(self, ieee_address):
+    def removeNodeInformation(self, ieee_address):
       global joinList
       global deviceLinks
       global networkJson
@@ -2387,7 +2658,7 @@ class seWSNViewLayout(wx.Frame):
       jsonOUT.close()
       shutil.copyfile('network.json', 'data/network.json')
 
-   def format(self, d, tab=0):
+    def format(self, d, tab=0):
       #s = ['{\n']
       s = ['']
       for k,v in d.items():
@@ -2512,7 +2783,7 @@ class seWSNViewLayout(wx.Frame):
       #s.append('%s}' % ('  '*tab))
       return ''.join(s)
 
-   def OnSerialRead(self, event):
+    def OnSerialRead(self, event):
       global fileCounter
       global pageNetMon
       global commishList
@@ -3157,7 +3428,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal(text)
          self.UpdatePageTerminal("\r\n")
 
-   def ComPortArgusThread(self):
+    def ComPortArgusThread(self):
       # thread that will handle the serial traffic using xbee intrepreter.
       while self.alive.isSet():
          try:
@@ -3169,7 +3440,7 @@ class seWSNViewLayout(wx.Frame):
          event = SerialRxEvent(self.GetId(), text)
          self.GetEventHandler().AddPendingEvent(event)
 
-   def ComPortThread(self):
+    def ComPortThread(self):
       """Thread that handles serial port reading with improved error handling."""
       while self.thread:
          if self.is_port_open():
@@ -3179,14 +3450,14 @@ class seWSNViewLayout(wx.Frame):
                wx.PostEvent(self, evt)
          time.sleep(0.01)  # Small delay to prevent CPU hogging
 
-   def OnHelp(self, event):
+    def OnHelp(self, event):
       """Menu point Help menu. Show the help dialog"""
       message = "Version Information:\n\nseWSNView.py      : 0.0.3.01\nCompany Name   : Schneider Electric\nComments            : Engineering Release\nLegal Copyright    : Copyright (C) 2014"
       dialog = wx.MessageDialog(self, message, caption="Help About", style = wx.OK, pos=wx.DefaultPosition)
       result = dialog.ShowModal()
       dialog.Destroy()
 
-   def OnSendQNPResponse(self, event):
+    def OnSendQNPResponse(self, event):
       global tb
       StatusReq = bytearray()
       StatusReq.extend(b'\xFE')  # header
@@ -3227,7 +3498,7 @@ class seWSNViewLayout(wx.Frame):
          self.UpdatePageTerminal(StatusReq.hex())
          self.UpdatePageTerminal("\n")
 
-   def OnSendRemoveNode(self, event):
+    def OnSendRemoveNode(self, event):
       """Placeholder for Remove Node menu action. Implement functionality as needed."""
       wx.MessageBox("Remove Node functionality not yet implemented.", "Info", wx.OK | wx.ICON_INFORMATION)
 
