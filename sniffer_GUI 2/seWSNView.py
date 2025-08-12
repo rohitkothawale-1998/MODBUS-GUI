@@ -747,3 +747,4 @@ class MyApp(wx.App):
 if __name__ == "__main__":
     app = MyApp(False)
     app.MainLoop()
+
