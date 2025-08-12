@@ -62,6 +62,9 @@ ID_READ_BATTERY_DISCHARGE_TOTAL = wx.NewId()
 ID_READ_FROM_GRID_TO_LOAD       = wx.NewId()
 ID_READ_OPERATION_HOURS         = wx.NewId()
 
+# NEW: menu item id for "Pull all data"
+ID_PULL_ALL                 = wx.NewId()
+
 # -----------------------------
 # Terminal settings
 NEWLINE_CR   = 0
@@ -122,7 +125,7 @@ class TerminalSettingsDialog(wx.Dialog):
         self.EndModal(wx.ID_CANCEL)
 
 # -----------------------------
-# Menubar (same structure)
+# Menubar (same structure) + new "Pull all data" menu
 class seWSNMenubar(wx.Frame):
     def __init__(self, parent):
         parent.seWSNView_menubar = wx.MenuBar()
@@ -176,6 +179,12 @@ class seWSNMenubar(wx.Frame):
         item_help = help_menu.Append(ID_HELP, "&Help", "")
         parent.Bind(wx.EVT_MENU, parent.OnHelp, item_help)
         parent.seWSNView_menubar.Append(help_menu, "&Help")
+
+        # NEW: top-level "Pull all data" menu with one item
+        pull_menu = wx.Menu()
+        item_pull = pull_menu.Append(ID_PULL_ALL, "&Pull all data", "")
+        parent.Bind(wx.EVT_MENU, parent.OnPullAll, item_pull)
+        parent.seWSNView_menubar.Append(pull_menu, "Pull all data")
 
 # -----------------------------
 # Pages
@@ -351,6 +360,9 @@ class seWSNViewLayout(wx.Frame):
         self.Bind(wx.EVT_MENU, self.OnReadFromGridToLoad,        id=ID_READ_FROM_GRID_TO_LOAD)
         self.Bind(wx.EVT_MENU, self.OnReadOperationHours,        id=ID_READ_OPERATION_HOURS)
 
+        # NEW: bind "Pull all data"
+        self.Bind(wx.EVT_MENU, self.OnPullAll,                   id=ID_PULL_ALL)
+
         # Window close
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
@@ -524,7 +536,6 @@ class seWSNViewLayout(wx.Frame):
                 return None
         except Exception:
             pass
-        # Some older exceptions may be ModbusIOException instances that behave like errors
         if getattr(rr, "registers", None) is None:
             self.UpdatePageTerminal(f"No data returned at 0x{address:04X}: {rr}\n")
             return None
@@ -736,6 +747,45 @@ class seWSNViewLayout(wx.Frame):
         self.pageNetMon.hourstxc.SetValue(str(hours))
         self.UpdatePageTerminal(f"Operation Hours: {hours}\n")
 
+    # ---------- NEW: Pull everything at once
+    def OnPullAll(self, event):
+        if not self.mb:
+            wx.MessageBox("Modbus client is not connected.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+        self.UpdatePageTerminal("Pulling all data...\n")
+        calls = [
+            self.OnReadSerialNumber,
+            self.OnReadInverterSN,
+            self.OnReadProductionDate,
+            self.OnReadFW,
+            self.OnReadHW,
+            self.OnReadModelNumber,
+            self.OnReadManufacturer,
+            self.OnReadACInputVoltage,
+            self.OnReadACInputCurrent,
+            self.OnReadACInputPower,
+            self.OnReadPV1InputPower,
+            self.OnReadPV2InputPower,
+            self.OnReadBatteryVoltage,
+            self.OnReadBatterySOC,
+            self.OnReadOutputFrequency,
+            self.OnReadDeviceTemperature,
+            self.OnReadLineChargeTotal,
+            self.OnReadPVGenerationTotal,
+            self.OnReadLoadConsumptionTotal,
+            self.OnReadBatteryChargeTotal,
+            self.OnReadBatteryDischargeTotal,
+            self.OnReadFromGridToLoad,
+            self.OnReadOperationHours,
+        ]
+        for fn in calls:
+            try:
+                fn(None)
+                time.sleep(0.02)  # tiny pause to keep UI responsive
+            except Exception as e:
+                self.UpdatePageTerminal(f"Error during batch: {e}\n")
+        self.UpdatePageTerminal("Done pulling all data.\n")
+
 # -----------------------------
 class MyApp(wx.App):
     def OnInit(self):
@@ -747,4 +797,3 @@ class MyApp(wx.App):
 if __name__ == "__main__":
     app = MyApp(False)
     app.MainLoop()
-
