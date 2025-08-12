@@ -5,10 +5,11 @@
 #   pip install wxPython pymodbus pyserial
 #
 # Notes:
-# - UI kept the same: "Network Monitor" + "Terminal View"
+# - UI: "Network Monitor" + "Terminal View"
 # - Version tolerant for pymodbus 2.x / 3.x
-# - All Modbus reads use keyword args only (no positional),
-#   trying 'slave=', then 'unit=', then without unit.
+# - Auto USB serial detection on startup
+# - "Pull all data" menu item
+# - Three-column Network Monitor layout (no blank left pane)
 
 import wx
 import wxSerialConfigDialog
@@ -16,7 +17,7 @@ import serial
 import threading
 import time
 
-from serial.tools import list_ports  # <-- NEW: for auto-detect
+from serial.tools import list_ports  # auto-detect
 
 import pymodbus
 from pymodbus.client import ModbusSerialClient
@@ -64,8 +65,7 @@ ID_READ_BATTERY_DISCHARGE_TOTAL = wx.NewId()
 ID_READ_FROM_GRID_TO_LOAD       = wx.NewId()
 ID_READ_OPERATION_HOURS         = wx.NewId()
 
-# Existing extra feature
-ID_PULL_ALL                 = wx.NewId()
+ID_PULL_ALL                 = wx.NewId()  # "Pull all data"
 
 # -----------------------------
 # Terminal settings
@@ -127,7 +127,7 @@ class TerminalSettingsDialog(wx.Dialog):
         self.EndModal(wx.ID_CANCEL)
 
 # -----------------------------
-# Menubar (same structure) + existing "Pull all data"
+# Menubar (same structure) + "Pull all data"
 class seWSNMenubar(wx.Frame):
     def __init__(self, parent):
         parent.seWSNView_menubar = wx.MenuBar()
@@ -201,106 +201,72 @@ class PageTerminalView(wx.Panel):
         self.SetSizer(s)
 
 class PageNetworkMonitor(wx.Panel):
+    """Three clean columns without the old blank left pane."""
     def __init__(self, parent):
         wx.Panel.__init__(self, parent=parent, id=wx.ID_ANY)
         tc_style = wx.TE_READONLY
 
-        nmSplitter = wx.SplitterWindow(self, id=wx.ID_ANY)
-        nmSplitter.SetMinimumPaneSize(250)
+        root = wx.BoxSizer(wx.HORIZONTAL)
 
-        tree_pane = wx.Panel(nmSplitter, id=wx.ID_ANY)
-        self.tree_ctrl = wx.TreeCtrl(tree_pane, wx.ID_ANY)
-        p1sizer = wx.BoxSizer(wx.VERTICAL)
-        p1sizer.Add(self.tree_ctrl, 1, wx.GROW, 0)
-        tree_pane.SetSizerAndFit(p1sizer)
+        # helpers -------------------------------------------------------------
+        def make_column(title):
+            box = wx.StaticBox(self, wx.ID_ANY, title)
+            col = wx.StaticBoxSizer(box, wx.VERTICAL)
+            grid = wx.FlexGridSizer(rows=0, cols=2, hgap=8, vgap=6)
+            grid.AddGrowableCol(1, 1)              # value column stretches
+            col.Add(grid, 1, wx.EXPAND | wx.ALL, 8)
+            return col, grid
 
-        nmstat_pane = wx.Panel(nmSplitter, -1)
+        def add_row(grid, label):
+            lbl = wx.StaticText(self, wx.ID_ANY, label)
+            txt = wx.TextCtrl(self, wx.ID_ANY, style=tc_style)
+            txt.SetMinSize((220, -1))              # consistent, professional width
+            grid.Add(lbl, 0, wx.ALIGN_RIGHT | wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.TOP, 2)
+            grid.Add(txt, 0, wx.EXPAND | wx.RIGHT | wx.TOP, 2)
+            return txt
 
-        # Device Data
-        statdevicesizer = wx.StaticBoxSizer(wx.StaticBox(nmstat_pane, wx.ID_ANY, "Device Data"), wx.VERTICAL)
+        # Device Data --------------------------------------------------------
+        dev_col, dev_grid = make_column("Device Data")
+        self.sernumtxc       = add_row(dev_grid, "Serial #")
+        self.invertsntxc     = add_row(dev_grid, "Inverter SN")
+        self.proddatetxc     = add_row(dev_grid, "Production Date")
+        self.fwversiontxc    = add_row(dev_grid, "Firmware Version")
+        self.hwvertxc        = add_row(dev_grid, "HW Version")
+        self.modnumtxc       = add_row(dev_grid, "Model Number")
+        self.manufacturetxc  = add_row(dev_grid, "Manufacturer")
 
-        def row(label):
-            hs = wx.BoxSizer(wx.HORIZONTAL)
-            st = wx.StaticText(nmstat_pane, wx.ID_ANY, label)
-            hs.Add(st, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
-            tc = wx.TextCtrl(nmstat_pane, wx.ID_ANY, style=tc_style)
-            hs.Add(tc, 1, 0, 0)
-            return hs, tc
+        # Run-time Data ------------------------------------------------------
+        run_col, run_grid = make_column("Run-time Data")
+        self.acinvolttxc     = add_row(run_grid, "AC Input Voltage")
+        self.acincurrtxc     = add_row(run_grid, "AC Input Current")
+        self.acinpowtxc      = add_row(run_grid, "AC Input Power")
+        self.pvinvolttxc     = add_row(run_grid, "PV Input Voltage")
+        self.pvincurrtxc     = add_row(run_grid, "PV Input Current")
+        self.pvinpowtxc      = add_row(run_grid, "PV Input Power")
+        self.batteryvolttxc  = add_row(run_grid, "Battery Voltage")
+        self.batterysoctxc   = add_row(run_grid, "Battery SOC")
+        self.outfreqtxc      = add_row(run_grid, "Output Frequency")
+        self.temptxc         = add_row(run_grid, "Device Temperature")
+        self.utctmtxc        = add_row(run_grid, "UTC Time")
 
-        r, self.sernumtxc = row("Serial #")
-        statdevicesizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.invertsntxc = row("Inverter SN")
-        statdevicesizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.proddatetxc = row("Production Date")
-        statdevicesizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.fwversiontxc = row("Firmware Version")
-        statdevicesizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.hwvertxc = row("HW Version")
-        statdevicesizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.modnumtxc = row("Model Number")
-        statdevicesizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.manufacturetxc = row("Manufacturer")
-        statdevicesizer.Add(r, 0, wx.EXPAND, 0)
+        # Summary Data -------------------------------------------------------
+        sum_col, sum_grid = make_column("Summary Data")
+        self.totalacintxc        = add_row(sum_grid, "Total AC Input")
+        self.totalpvintxc        = add_row(sum_grid, "Total PV Input")
+        self.totalacouttxc       = add_row(sum_grid, "Total AC Output")
+        self.batchgtotaltxc      = add_row(sum_grid, "Battery Charge Total")
+        self.batdischgtotaltxc   = add_row(sum_grid, "Battery Discharge Total")
+        self.usedenergytotaltxc  = add_row(sum_grid, "Used Energy Total")
+        self.hourstxc            = add_row(sum_grid, "Operation Hours")
+        self.cyclestxc           = add_row(sum_grid, "Charge Cycles")
+        self.maxdailytxc         = add_row(sum_grid, "Max Daily Production")
 
-        # Network (runtime) Data
-        statnetworksizer = wx.StaticBoxSizer(wx.StaticBox(nmstat_pane, wx.ID_ANY, "Run-time Data"), wx.VERTICAL)
-        r, self.acinvolttxc = row("AC Input Voltage")
-        statnetworksizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.acincurrtxc = row("AC Input Current")
-        statnetworksizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.acinpowtxc = row("AC Input Power")
-        statnetworksizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.pvinvolttxc = row("PV Input Voltage")
-        statnetworksizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.pvincurrtxc = row("PV Input Current")
-        statnetworksizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.pvinpowtxc = row("PV Input Power")
-        statnetworksizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.batteryvolttxc = row("Battery Voltage")
-        statnetworksizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.batterysoctxc = row("Battery SOC")
-        statnetworksizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.outfreqtxc = row("Output Frequency")
-        statnetworksizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.temptxc = row("Device Temperature")
-        statnetworksizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.utctmtxc = row("UTC Time")
-        statnetworksizer.Add(r, 0, wx.EXPAND, 0)
+        # Add the three columns evenly ---------------------------------------
+        root.Add(dev_col, 1, wx.EXPAND | wx.ALL, 6)
+        root.Add(run_col, 1, wx.EXPAND | wx.ALL, 6)
+        root.Add(sum_col, 1, wx.EXPAND | wx.ALL, 6)
 
-        # Summary Data
-        statsensorsizer = wx.StaticBoxSizer(wx.StaticBox(nmstat_pane, wx.ID_ANY, "Summary Data"), wx.VERTICAL)
-        r, self.totalacintxc = row("Total AC Input")
-        statsensorsizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.totalpvintxc = row("Total PV Input")
-        statsensorsizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.totalacouttxc = row("Total AC Output")
-        statsensorsizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.batchgtotaltxc = row("Battery Charge Total")
-        statsensorsizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.batdischgtotaltxc = row("Battery Discharge Total")
-        statsensorsizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.usedenergytotaltxc = row("Used Energy Total")
-        statsensorsizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.hourstxc = row("Operation Hours")
-        statsensorsizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.cyclestxc = row("Charge Cycles")
-        statsensorsizer.Add(r, 0, wx.EXPAND, 0)
-        r, self.maxdailytxc = row("Max Daily Production")
-        statsensorsizer.Add(r, 0, wx.EXPAND, 0)
-
-        statussizer = wx.BoxSizer(wx.HORIZONTAL)
-        statussizer.Add(statdevicesizer, 1, wx.EXPAND, 0)
-        statussizer.Add(statnetworksizer, 1, wx.EXPAND, 0)
-        statussizer.Add(statsensorsizer, 1, wx.EXPAND, 0)
-
-        p2sizer = wx.BoxSizer(wx.VERTICAL)
-        p2sizer.Add(statussizer, 1, wx.GROW | wx.ALL, 5)
-        nmstat_pane.SetSizerAndFit(p2sizer)
-
-        nmSplitter.SplitVertically(tree_pane, nmstat_pane, 1)
-        spsizer = wx.BoxSizer(wx.VERTICAL)
-        spsizer.Add(nmSplitter, 1, wx.EXPAND, 0)
-        self.SetSizerAndFit(spsizer)
+        self.SetSizer(root)
 
 # -----------------------------
 class seWSNViewLayout(wx.Frame):
@@ -365,7 +331,7 @@ class seWSNViewLayout(wx.Frame):
         # Window close
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
-        # NEW: auto-detect USB serial and connect after the window is up
+        # Auto-detect USB serial and connect after the window is up
         wx.CallAfter(self.autodetect_usb_and_connect)
 
     # ---------- UI helpers
@@ -482,14 +448,13 @@ class seWSNViewLayout(wx.Frame):
         except Exception as e:
             wx.MessageBox(f"Error in port settings: {e}", "Error", wx.OK | wx.ICON_ERROR)
 
-    # ---------- NEW: auto-detect + connect ----------
+    # ---------- Auto-detect + connect ----------
     def _choose_usb_port(self, ports):
         """Return best USB serial candidate or None."""
         candidates = []
         for p in ports:
             dev = (p.device or "").lower()
             desc = (p.description or "").lower()
-            # Must look like a USB/CDC/bridge device
             looks_usb = (
                 "usb" in desc or
                 any(x in dev for x in ["ttyusb", "ttyacm", "usbserial", "usbmodem"]) or
@@ -498,7 +463,7 @@ class seWSNViewLayout(wx.Frame):
             if not looks_usb:
                 continue
             if "bluetooth" in desc:
-                continue  # avoid virtual BT serials
+                continue
 
             score = 0
             if any(x in dev for x in ["ttyusb", "ttyacm", "usbserial", "usbmodem"]):
@@ -516,7 +481,6 @@ class seWSNViewLayout(wx.Frame):
         return candidates[0][1]
 
     def autodetect_usb_and_connect(self):
-        """Detect a USB serial port, select it, and connect automatically."""
         try:
             ports = list(list_ports.comports())
         except Exception as e:
@@ -532,9 +496,7 @@ class seWSNViewLayout(wx.Frame):
             self.UpdatePageTerminal("Auto-detect: no USB serial device found.\n")
             return
 
-        # Assign to the existing Serial object so the config dialog also sees it
         self.serial.port = cand.device
-        # Ensure 9600 8N1 defaults unless user changed them later
         if not getattr(self.serial, "baudrate", None):
             self.serial.baudrate = 9600
         self.serial.bytesize = getattr(self.serial, "bytesize", 8) or 8
@@ -556,32 +518,23 @@ class seWSNViewLayout(wx.Frame):
 
     # ---------- Version-tolerant read wrapper (keywords only)
     def _call_read(self, method_name, address, count, unit):
-        """Call a Modbus read with keyword args only; try 'slave', then 'unit', then without."""
         if not self.mb:
             return None
         fn = getattr(self.mb, method_name, None)
         if not fn:
             return None
-
-        # Try keyword 'slave'
         try:
             return fn(address=address, count=count, slave=unit)
         except TypeError:
             pass
-
-        # Try keyword 'unit'
         try:
             return fn(address=address, count=count, unit=unit)
         except TypeError:
             pass
-
-        # Try without unit (client default)
         try:
             return fn(address=address, count=count)
         except TypeError:
             pass
-
-        # Last resort: only address (count may default to 1 in some builds)
         try:
             return fn(address=address)
         except Exception:
@@ -655,21 +608,21 @@ class seWSNViewLayout(wx.Frame):
 
     # ---------- Identity / Info
     def OnReadSerialNumber(self, event):
-        regs = self.mb_read_holding(0xC780, 15)  # 15 regs ASCII
+        regs = self.mb_read_holding(0xC780, 15)
         if regs is None: return
         ser = self.regs_to_ascii(regs)
         self.pageNetMon.sernumtxc.SetValue(ser)
         self.UpdatePageTerminal(f"Serial #: {ser}\n")
 
     def OnReadInverterSN(self, event):
-        regs = self.mb_read_holding(0xC78F, 10)  # 10 regs ASCII
+        regs = self.mb_read_holding(0xC78F, 10)
         if regs is None: return
         sn = self.regs_to_ascii(regs)
         self.pageNetMon.invertsntxc.SetValue(sn)
         self.UpdatePageTerminal(f"Inverter SN: {sn}\n")
 
     def OnReadProductionDate(self, event):
-        regs = self.mb_read_holding(0xC7A0, 4)  # ASCII (device-specific)
+        regs = self.mb_read_holding(0xC7A0, 4)
         if regs is None: return
         ds = self.regs_to_ascii(regs)
         self.pageNetMon.proddatetxc.SetValue(ds)
@@ -768,11 +721,11 @@ class seWSNViewLayout(wx.Frame):
     def OnReadDeviceTemperature(self, event):
         regs = self.mb_read_holding(0x7579, 1)
         if regs is None: return
-        t = self.regs_to_s16(regs)  # often signed
+        t = self.regs_to_s16(regs)
         self.pageNetMon.temptxc.SetValue(str(t))
         self.UpdatePageTerminal(f"Device Temperature: {t}\n")
 
-    # ---------- Summary (2-register u32 big-endian unless your map says otherwise)
+    # ---------- Summary
     def OnReadLineChargeTotal(self, event):
         regs = self.mb_read_holding(0xCB61, 2)
         if regs is None: return
@@ -821,7 +774,7 @@ class seWSNViewLayout(wx.Frame):
         self.pageNetMon.hourstxc.SetValue(str(hours))
         self.UpdatePageTerminal(f"Operation Hours: {hours}\n")
 
-    # ---------- Pull all data (existing extra)
+    # ---------- Pull all data
     def OnPullAll(self, event):
         if not self.mb:
             wx.MessageBox("Modbus client is not connected.", "Error", wx.OK | wx.ICON_ERROR)
@@ -855,7 +808,7 @@ class seWSNViewLayout(wx.Frame):
         for fn in calls:
             try:
                 fn(None)
-                time.sleep(0.02)  # tiny pause to keep UI responsive
+                time.sleep(0.02)
             except Exception as e:
                 self.UpdatePageTerminal(f"Error during batch: {e}\n")
         self.UpdatePageTerminal("Done pulling all data.\n")
