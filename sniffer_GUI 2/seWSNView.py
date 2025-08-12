@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
-# SE Wireless Development Tool (Modbus RTU)
+# SE Wireless Development Tool (Modbus RTU) — table-driven registers
 #
 # Requires:
 #   pip install wxPython pymodbus pyserial
 #
-# Notes:
-# - UI: "Network Monitor" + "Terminal View"
-# - Version tolerant for pymodbus 2.x / 3.x
-# - Auto USB serial detection on startup
-# - "Pull all data" menu item
-# - Three-column Network Monitor layout (no blank left pane)
+# UI: three columns (Device / Run-time / Summary), Terminal View, "Pull all data",
+# auto USB serial detection. Values are decoded/scaled from the Reg tables below.
 
 import wx
 import wxSerialConfigDialog
 import serial
 import threading
 import time
-
-from serial.tools import list_ports  # auto-detect
+from dataclasses import dataclass
+from typing import List, Dict, Optional
+from serial.tools import list_ports
 
 import pymodbus
 from pymodbus.client import ModbusSerialClient
@@ -31,13 +28,66 @@ except Exception:
     _HAS_FRAMER = False
     _FRAMER_KW = 'method="rtu"'
 
-# -----------------------------
-# IDs (keep as-is; deprecation warnings are harmless)
+# ──────────────────────────────────────────────────────────────────────────────
+# Register table (your definitions)
+
+@dataclass(frozen=True)
+class Reg:
+    name: str           # UI label
+    addr: int           # Modbus address (decimal)
+    words: int          # number of 16-bit words
+    codec: str          # ascii | u16 | s16 | u32 | s32
+    scale: float        # multiply after decoding
+    unit: str           # engineering unit for display
+
+DEVICE_DATA: List[Reg] = [
+    Reg("Serial #",         0xC780, 15, "ascii", 1,     ""),
+    Reg("Inverter SN",      0xC78F, 10, "ascii", 1,     ""),
+    Reg("Production Date",  0xC7A0,  4, "ascii", 1,     ""),
+    Reg("Firmware Version", 0xC783,  1, "u16",   1,     ""),
+    Reg("HW Version",       0xC784,  1, "u16",   1,     ""),
+    Reg("Model Number",     0xC785,  1, "u16",   1,     ""),
+    Reg("Manufacturer",     0xC786,  1, "u16",   1,     ""),
+]
+
+RUNTIME_DATA: List[Reg] = [
+    Reg("AC Input Voltage",   0x756A, 1, "u16",  0.1,   "V"),
+    Reg("AC Input Current",   0x756B, 1, "s16",  0.1,   "A"),
+    Reg("AC Input Power",     0x7571, 1, "s16",  1,     "VA"),
+    Reg("Output Active Power",0x755E, 1, "u16",  1,     "W"),
+    # Reg("PV Input Voltage", 0x753B, 1, "u16", 0.1, "V"),
+    # Reg("PV Input Current", 0x753C, 1, "u16", 0.1, "A"),
+    Reg("PV1 Input Power",    0x7540, 1, "u16",  1,     "W"),
+    Reg("PV2 Input Power",    0x753D, 1, "u16",  1,     "W"),
+    Reg("Battery Voltage",    0x7530, 1, "u16",  0.1,   "V"),
+    Reg("Battery SOC",        0x7532, 1, "u16",  1,     "%"),
+    Reg("Output Frequency",   0x754A, 1, "u16",  0.01,  "Hz"),
+    Reg("Device Temperature", 0x7579, 1, "s16",  0.1,   "°C"),
+]
+
+SUMMARY_DATA: List[Reg] = [
+    Reg("Line Charge Total",        0xCB61, 2, "u32", 0.0001, "kWh"),
+    Reg("PV Generation Total",      0xCB56, 2, "u32", 0.0001, "kWh"),
+    Reg("Load Consumption Total",   0xCB58, 2, "u32", 0.0001, "kWh"),
+    Reg("Battery Charge Total",     0xCB52, 2, "u32", 0.0001, "kWh"),
+    Reg("Battery Discharge Total",  0xCB54, 2, "u32", 0.0001, "kWh"),
+    Reg("From Grid To Load",        0xCB63, 2, "u32", 0.0001, "kWh"),
+    Reg("Operation Hours",          0xCBB0, 1, "u16", 1,      "h"),
+]
+
+ALL_REGS: Dict[int, Reg] = {r.addr: r for r in DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA}
+REG_BY_NAME: Dict[str, Reg] = {r.name: r for r in DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# IDs (menus)
+
 ID_EXIT                     = wx.NewId()
 ID_SETTINGS                 = wx.NewId()
 ID_TERM                     = wx.NewId()
 ID_HELP                     = wx.NewId()
+ID_PULL_ALL                 = wx.NewId()
 
+# Keep these so your existing Send menu entries still work:
 ID_READ_SERIAL_NUMBER       = wx.NewId()
 ID_READ_INVERTER_SN         = wx.NewId()
 ID_READ_PRODUCTION_DATE     = wx.NewId()
@@ -45,7 +95,6 @@ ID_READ_FW                  = wx.NewId()
 ID_READ_HW                  = wx.NewId()
 ID_READ_MODEL_NUMBER        = wx.NewId()
 ID_READ_MANUFACTURER        = wx.NewId()
-
 ID_READ_AC_INPUT_VOLTAGE    = wx.NewId()
 ID_READ_AC_INPUT_CURRENT    = wx.NewId()
 ID_READ_AC_INPUT_POWER      = wx.NewId()
@@ -56,7 +105,6 @@ ID_READ_BATTERY_VOLTAGE     = wx.NewId()
 ID_READ_BATTERY_SOC         = wx.NewId()
 ID_READ_OUTPUT_FREQUENCY    = wx.NewId()
 ID_READ_DEVICE_TEMPERATURE  = wx.NewId()
-
 ID_READ_LINE_CHARGE_TOTAL       = wx.NewId()
 ID_READ_PV_GENERATION_TOTAL     = wx.NewId()
 ID_READ_LOAD_CONSUMPTION_TOTAL  = wx.NewId()
@@ -65,13 +113,8 @@ ID_READ_BATTERY_DISCHARGE_TOTAL = wx.NewId()
 ID_READ_FROM_GRID_TO_LOAD       = wx.NewId()
 ID_READ_OPERATION_HOURS         = wx.NewId()
 
-ID_PULL_ALL                 = wx.NewId()  # "Pull all data"
-
-# -----------------------------
 # Terminal settings
-NEWLINE_CR   = 0
-NEWLINE_LF   = 1
-NEWLINE_CRLF = 2
+NEWLINE_CR, NEWLINE_LF, NEWLINE_CRLF = 0, 1, 2
 
 class TerminalSetup:
     def __init__(self):
@@ -84,17 +127,15 @@ class TerminalSettingsDialog(wx.Dialog):
         self.settings = kwds['settings']
         del kwds['settings']
         kwds["style"] = wx.DEFAULT_DIALOG_STYLE
-        wx.Dialog.__init__(self, *args, **kwds)
+        super().__init__(*args, **kwds)
         self.checkbox_echo = wx.CheckBox(self, -1, "Local Echo")
         self.checkbox_unprintable = wx.CheckBox(self, -1, "Show unprintable characters")
         self.radio_box_newline = wx.RadioBox(
             self, -1, "Newline Handling",
-            choices=["CR only", "LF only", "CR+LF"],
-            majorDimension=0, style=wx.RA_SPECIFY_ROWS
+            choices=["CR only", "LF only", "CR+LF"], style=wx.RA_SPECIFY_ROWS
         )
         self.button_ok = wx.Button(self, -1, "OK")
         self.button_cancel = wx.Button(self, -1, "Cancel")
-
         self.SetTitle("Terminal Settings")
         self.button_ok.SetDefault()
 
@@ -117,32 +158,31 @@ class TerminalSettingsDialog(wx.Dialog):
         self.Bind(wx.EVT_BUTTON, self.OnOK, id=self.button_ok.GetId())
         self.Bind(wx.EVT_BUTTON, self.OnCancel, id=self.button_cancel.GetId())
 
-    def OnOK(self, events):
+    def OnOK(self, _):
         self.settings.echo = self.checkbox_echo.GetValue()
         self.settings.unprintable = self.checkbox_unprintable.GetValue()
         self.settings.newline = self.radio_box_newline.GetSelection()
         self.EndModal(wx.ID_OK)
 
-    def OnCancel(self, events):
+    def OnCancel(self, _):
         self.EndModal(wx.ID_CANCEL)
 
-# -----------------------------
-# Menubar (same structure) + "Pull all data"
+# Menubar (adds "Pull all data")
 class seWSNMenubar(wx.Frame):
     def __init__(self, parent):
         parent.seWSNView_menubar = wx.MenuBar()
         parent.SetMenuBar(parent.seWSNView_menubar)
 
         file_menu = wx.Menu()
-        item_exit = file_menu.Append(ID_EXIT, "&Exit", "")
-        parent.Bind(wx.EVT_MENU, parent.OnExit, item_exit)
+        file_menu.Append(ID_EXIT, "&Exit", "")
+        parent.Bind(wx.EVT_MENU, parent.OnExit, id=ID_EXIT)
         parent.seWSNView_menubar.Append(file_menu, "&File")
 
         config_menu = wx.Menu()
-        item_settings = config_menu.Append(ID_SETTINGS, "&Port Settings...", "")
-        item_term = config_menu.Append(ID_TERM, "&Terminal Settings...", "")
-        parent.Bind(wx.EVT_MENU, parent.OnPortSettings, item_settings)
-        parent.Bind(wx.EVT_MENU, parent.OnTermSettings, item_term)
+        config_menu.Append(ID_SETTINGS, "&Port Settings...", "")
+        config_menu.Append(ID_TERM, "&Terminal Settings...", "")
+        parent.Bind(wx.EVT_MENU, parent.OnPortSettings, id=ID_SETTINGS)
+        parent.Bind(wx.EVT_MENU, parent.OnTermSettings, id=ID_TERM)
         parent.seWSNView_menubar.Append(config_menu, "&Config")
 
         send_menu = wx.Menu()
@@ -178,118 +218,87 @@ class seWSNMenubar(wx.Frame):
         parent.seWSNView_menubar.Append(send_menu, "&Send")
 
         help_menu = wx.Menu()
-        item_help = help_menu.Append(ID_HELP, "&Help", "")
-        parent.Bind(wx.EVT_MENU, parent.OnHelp, item_help)
+        help_menu.Append(ID_HELP, "&Help", "")
+        parent.Bind(wx.EVT_MENU, parent.OnHelp, id=ID_HELP)
         parent.seWSNView_menubar.Append(help_menu, "&Help")
 
         pull_menu = wx.Menu()
-        item_pull = pull_menu.Append(ID_PULL_ALL, "&Pull all data", "")
-        parent.Bind(wx.EVT_MENU, parent.OnPullAll, item_pull)
+        pull_menu.Append(ID_PULL_ALL, "&Pull all data", "")
+        parent.Bind(wx.EVT_MENU, parent.OnPullAll, id=ID_PULL_ALL)
         parent.seWSNView_menubar.Append(pull_menu, "Pull all data")
 
-# -----------------------------
 # Pages
 class PageTerminalView(wx.Panel):
     def __init__(self, parent):
-        wx.Panel.__init__(self, parent=parent, id=wx.ID_ANY)
-        self.text_ctrl_output = wx.TextCtrl(
-            self, wx.ID_ANY, "",
-            style=wx.TE_MULTILINE | wx.TE_READONLY
-        )
+        super().__init__(parent=parent, id=wx.ID_ANY)
+        self.text_ctrl_output = wx.TextCtrl(self, wx.ID_ANY, "", style=wx.TE_MULTILINE | wx.TE_READONLY)
         s = wx.BoxSizer(wx.VERTICAL)
         s.Add(self.text_ctrl_output, 1, wx.EXPAND, 0)
         self.SetSizer(s)
 
 class PageNetworkMonitor(wx.Panel):
-    """Three clean columns without the old blank left pane."""
+    """Three clean columns built from the Reg tables."""
     def __init__(self, parent):
-        wx.Panel.__init__(self, parent=parent, id=wx.ID_ANY)
+        super().__init__(parent=parent, id=wx.ID_ANY)
         tc_style = wx.TE_READONLY
+        self.field_by_name: Dict[str, wx.TextCtrl] = {}
+        self.field_by_addr: Dict[int, wx.TextCtrl] = {}
 
         root = wx.BoxSizer(wx.HORIZONTAL)
 
-        # helpers -------------------------------------------------------------
         def make_column(title):
             box = wx.StaticBox(self, wx.ID_ANY, title)
             col = wx.StaticBoxSizer(box, wx.VERTICAL)
             grid = wx.FlexGridSizer(rows=0, cols=2, hgap=8, vgap=6)
-            grid.AddGrowableCol(1, 1)              # value column stretches
+            grid.AddGrowableCol(1, 1)
             col.Add(grid, 1, wx.EXPAND | wx.ALL, 8)
             return col, grid
 
-        def add_row(grid, label):
-            lbl = wx.StaticText(self, wx.ID_ANY, label)
+        def add_row(grid, reg: Reg):
+            lbl = wx.StaticText(self, wx.ID_ANY, reg.name)
             txt = wx.TextCtrl(self, wx.ID_ANY, style=tc_style)
-            txt.SetMinSize((220, -1))              # consistent, professional width
+            txt.SetMinSize((220, -1))
             grid.Add(lbl, 0, wx.ALIGN_RIGHT | wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.TOP, 2)
             grid.Add(txt, 0, wx.EXPAND | wx.RIGHT | wx.TOP, 2)
-            return txt
+            self.field_by_name[reg.name] = txt
+            self.field_by_addr[reg.addr] = txt
 
-        # Device Data --------------------------------------------------------
+        # Columns
         dev_col, dev_grid = make_column("Device Data")
-        self.sernumtxc       = add_row(dev_grid, "Serial #")
-        self.invertsntxc     = add_row(dev_grid, "Inverter SN")
-        self.proddatetxc     = add_row(dev_grid, "Production Date")
-        self.fwversiontxc    = add_row(dev_grid, "Firmware Version")
-        self.hwvertxc        = add_row(dev_grid, "HW Version")
-        self.modnumtxc       = add_row(dev_grid, "Model Number")
-        self.manufacturetxc  = add_row(dev_grid, "Manufacturer")
+        for r in DEVICE_DATA:
+            add_row(dev_grid, r)
 
-        # Run-time Data ------------------------------------------------------
         run_col, run_grid = make_column("Run-time Data")
-        self.acinvolttxc     = add_row(run_grid, "AC Input Voltage")
-        self.acincurrtxc     = add_row(run_grid, "AC Input Current")
-        self.acinpowtxc      = add_row(run_grid, "AC Input Power")
-        self.pvinvolttxc     = add_row(run_grid, "PV Input Voltage")
-        self.pvincurrtxc     = add_row(run_grid, "PV Input Current")
-        self.pvinpowtxc      = add_row(run_grid, "PV Input Power")
-        self.batteryvolttxc  = add_row(run_grid, "Battery Voltage")
-        self.batterysoctxc   = add_row(run_grid, "Battery SOC")
-        self.outfreqtxc      = add_row(run_grid, "Output Frequency")
-        self.temptxc         = add_row(run_grid, "Device Temperature")
-        self.utctmtxc        = add_row(run_grid, "UTC Time")
+        for r in RUNTIME_DATA:
+            add_row(run_grid, r)
 
-        # Summary Data -------------------------------------------------------
         sum_col, sum_grid = make_column("Summary Data")
-        self.totalacintxc        = add_row(sum_grid, "Total AC Input")
-        self.totalpvintxc        = add_row(sum_grid, "Total PV Input")
-        self.totalacouttxc       = add_row(sum_grid, "Total AC Output")
-        self.batchgtotaltxc      = add_row(sum_grid, "Battery Charge Total")
-        self.batdischgtotaltxc   = add_row(sum_grid, "Battery Discharge Total")
-        self.usedenergytotaltxc  = add_row(sum_grid, "Used Energy Total")
-        self.hourstxc            = add_row(sum_grid, "Operation Hours")
-        self.cyclestxc           = add_row(sum_grid, "Charge Cycles")
-        self.maxdailytxc         = add_row(sum_grid, "Max Daily Production")
+        for r in SUMMARY_DATA:
+            add_row(sum_grid, r)
 
-        # Add the three columns evenly ---------------------------------------
         root.Add(dev_col, 1, wx.EXPAND | wx.ALL, 6)
         root.Add(run_col, 1, wx.EXPAND | wx.ALL, 6)
         root.Add(sum_col, 1, wx.EXPAND | wx.ALL, 6)
 
         self.SetSizer(root)
 
-# -----------------------------
+# Main window
 class seWSNViewLayout(wx.Frame):
     def __init__(self, *args, **kwds):
-        wx.Frame.__init__(self, *args, **kwds)
+        super().__init__(*args, **kwds)
         self.SetTitle("SE Wireless Development Tool (Modbus RTU)")
         self.SetSize((1300, 900))
 
-        # serial object for the config dialog to configure
         self.serial = serial.Serial()
         self.serial.timeout = 1.0
 
         self.settings = TerminalSetup()
-
-        # Modbus client + guard
-        self.mb = None
+        self.mb: Optional[ModbusSerialClient] = None
         self.mb_lock = threading.Lock()
-        self.modbus_slave_id = 1  # <-- change if your device uses another unit id
+        self.modbus_slave_id = 1  # change if your device uses another unit id
 
-        # Menu bar
         seWSNMenubar(self)
 
-        # Notebook
         p = wx.Panel(self)
         self.nb = wx.Notebook(p)
         self.pageNetMon = PageNetworkMonitor(self.nb)
@@ -301,51 +310,48 @@ class seWSNViewLayout(wx.Frame):
         nbsizer.Add(self.nb, 1, wx.EXPAND)
         p.SetSizer(nbsizer)
 
-        # Bind menu events
-        self.Bind(wx.EVT_MENU, self.OnReadSerialNumber,          id=ID_READ_SERIAL_NUMBER)
-        self.Bind(wx.EVT_MENU, self.OnReadInverterSN,            id=ID_READ_INVERTER_SN)
-        self.Bind(wx.EVT_MENU, self.OnReadProductionDate,        id=ID_READ_PRODUCTION_DATE)
-        self.Bind(wx.EVT_MENU, self.OnReadFW,                    id=ID_READ_FW)
-        self.Bind(wx.EVT_MENU, self.OnReadHW,                    id=ID_READ_HW)
-        self.Bind(wx.EVT_MENU, self.OnReadModelNumber,           id=ID_READ_MODEL_NUMBER)
-        self.Bind(wx.EVT_MENU, self.OnReadManufacturer,          id=ID_READ_MANUFACTURER)
-        self.Bind(wx.EVT_MENU, self.OnReadACInputVoltage,        id=ID_READ_AC_INPUT_VOLTAGE)
-        self.Bind(wx.EVT_MENU, self.OnReadACInputCurrent,        id=ID_READ_AC_INPUT_CURRENT)
-        self.Bind(wx.EVT_MENU, self.OnReadACInputPower,          id=ID_READ_AC_INPUT_POWER)
-        self.Bind(wx.EVT_MENU, self.OnReadOutputActivePower,     id=ID_READ_OUTPUT_ACTIVE_POWER)
-        self.Bind(wx.EVT_MENU, self.OnReadPV1InputPower,         id=ID_READ_PV1_INPUT_POWER)
-        self.Bind(wx.EVT_MENU, self.OnReadPV2InputPower,         id=ID_READ_PV2_INPUT_POWER)
-        self.Bind(wx.EVT_MENU, self.OnReadBatteryVoltage,        id=ID_READ_BATTERY_VOLTAGE)
-        self.Bind(wx.EVT_MENU, self.OnReadBatterySOC,            id=ID_READ_BATTERY_SOC)
-        self.Bind(wx.EVT_MENU, self.OnReadOutputFrequency,       id=ID_READ_OUTPUT_FREQUENCY)
-        self.Bind(wx.EVT_MENU, self.OnReadDeviceTemperature,     id=ID_READ_DEVICE_TEMPERATURE)
-        self.Bind(wx.EVT_MENU, self.OnReadLineChargeTotal,       id=ID_READ_LINE_CHARGE_TOTAL)
-        self.Bind(wx.EVT_MENU, self.OnReadPVGenerationTotal,     id=ID_READ_PV_GENERATION_TOTAL)
-        self.Bind(wx.EVT_MENU, self.OnReadLoadConsumptionTotal,  id=ID_READ_LOAD_CONSUMPTION_TOTAL)
-        self.Bind(wx.EVT_MENU, self.OnReadBatteryChargeTotal,    id=ID_READ_BATTERY_CHARGE_TOTAL)
-        self.Bind(wx.EVT_MENU, self.OnReadBatteryDischargeTotal, id=ID_READ_BATTERY_DISCHARGE_TOTAL)
-        self.Bind(wx.EVT_MENU, self.OnReadFromGridToLoad,        id=ID_READ_FROM_GRID_TO_LOAD)
-        self.Bind(wx.EVT_MENU, self.OnReadOperationHours,        id=ID_READ_OPERATION_HOURS)
-        self.Bind(wx.EVT_MENU, self.OnPullAll,                   id=ID_PULL_ALL)
+        # Bind Send menu items to generic readers by name
+        bind = self.Bind
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Serial #"),               id=ID_READ_SERIAL_NUMBER)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Inverter SN"),            id=ID_READ_INVERTER_SN)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Production Date"),        id=ID_READ_PRODUCTION_DATE)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Firmware Version"),       id=ID_READ_FW)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("HW Version"),             id=ID_READ_HW)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Model Number"),           id=ID_READ_MODEL_NUMBER)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Manufacturer"),           id=ID_READ_MANUFACTURER)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("AC Input Voltage"),       id=ID_READ_AC_INPUT_VOLTAGE)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("AC Input Current"),       id=ID_READ_AC_INPUT_CURRENT)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("AC Input Power"),         id=ID_READ_AC_INPUT_POWER)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Output Active Power"),    id=ID_READ_OUTPUT_ACTIVE_POWER)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("PV1 Input Power"),        id=ID_READ_PV1_INPUT_POWER)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("PV2 Input Power"),        id=ID_READ_PV2_INPUT_POWER)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Battery Voltage"),        id=ID_READ_BATTERY_VOLTAGE)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Battery SOC"),            id=ID_READ_BATTERY_SOC)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Output Frequency"),       id=ID_READ_OUTPUT_FREQUENCY)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Device Temperature"),     id=ID_READ_DEVICE_TEMPERATURE)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Line Charge Total"),      id=ID_READ_LINE_CHARGE_TOTAL)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("PV Generation Total"),    id=ID_READ_PV_GENERATION_TOTAL)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Load Consumption Total"), id=ID_READ_LOAD_CONSUMPTION_TOTAL)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Battery Charge Total"),   id=ID_READ_BATTERY_CHARGE_TOTAL)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Battery Discharge Total"),id=ID_READ_BATTERY_DISCHARGE_TOTAL)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("From Grid To Load"),      id=ID_READ_FROM_GRID_TO_LOAD)
+        bind(wx.EVT_MENU, lambda e: self.read_and_show("Operation Hours"),        id=ID_READ_OPERATION_HOURS)
+        bind(wx.EVT_MENU, self.OnPullAll,                                         id=ID_PULL_ALL)
 
-        # Window close
         self.Bind(wx.EVT_CLOSE, self.OnClose)
-
-        # Auto-detect USB serial and connect after the window is up
         wx.CallAfter(self.autodetect_usb_and_connect)
 
-    # ---------- UI helpers
+    # UI helpers
     def UpdatePageTerminal(self, s):
         try:
             self.pageTerminal.text_ctrl_output.AppendText(str(s))
         except Exception:
             pass
 
-    # ---------- Settings / Help / Exit
-    def OnExit(self, event):
-        self.Close()
+    # Settings / Help / Exit
+    def OnExit(self, _): self.Close()
 
-    def OnClose(self, event):
+    def OnClose(self, _):
         try:
             if self.mb:
                 try:
@@ -357,7 +363,7 @@ class seWSNViewLayout(wx.Frame):
             pass
         self.Destroy()
 
-    def OnHelp(self, event):
+    def OnHelp(self, _):
         message = (
             "Version Information:\n\n"
             f"pymodbus: {getattr(pymodbus, '__version__', '?')}\n"
@@ -366,12 +372,12 @@ class seWSNViewLayout(wx.Frame):
         )
         wx.MessageBox(message, "Help About", wx.OK | wx.ICON_INFORMATION)
 
-    def OnTermSettings(self, event):
+    def OnTermSettings(self, _):
         dlg = TerminalSettingsDialog(None, -1, "", settings=self.settings)
         dlg.ShowModal()
         dlg.Destroy()
 
-    # ---------- Modbus setup
+    # Modbus setup
     def _parity_char(self, pyserial_parity):
         try:
             from serial import PARITY_NONE, PARITY_EVEN, PARITY_ODD
@@ -396,7 +402,6 @@ class seWSNViewLayout(wx.Frame):
         port_str = getattr(self.serial, "portstr", None) or getattr(self.serial, "port", None)
 
         if _HAS_FRAMER:
-            # Newer API (3.x)
             self.mb = ModbusSerialClient(
                 port=port_str,
                 framer=FramerType.RTU,
@@ -407,7 +412,6 @@ class seWSNViewLayout(wx.Frame):
                 timeout=self.serial.timeout or 1.0,
             )
         else:
-            # Older API (2.x)
             self.mb = ModbusSerialClient(
                 method="rtu",
                 port=port_str,
@@ -421,8 +425,7 @@ class seWSNViewLayout(wx.Frame):
         ok = self.mb.connect()
         return bool(ok)
 
-    def OnPortSettings(self, event=None):
-        """Open the port settings dialog and connect Modbus RTU using those settings."""
+    def OnPortSettings(self, _=None):
         try:
             dlg = wxSerialConfigDialog.SerialConfigDialog(
                 self, -1, "",
@@ -433,24 +436,25 @@ class seWSNViewLayout(wx.Frame):
             )
             if dlg.ShowModal() == wx.ID_OK:
                 if self.mb_connect_from_current_settings():
-                    self.SetTitle(
-                        f"SE Wireless Development Tool (Modbus RTU) on {self.serial.portstr} "
-                        f"[{self.serial.baudrate},{self.serial.bytesize}{self.serial.parity}{self.serial.stopbits}]"
-                    )
+                    self._update_title_connected()
                     self.UpdatePageTerminal("Modbus RTU connected.\n")
                     self.UpdatePageTerminal(f"pymodbus {getattr(pymodbus, '__version__', '?')} using {_FRAMER_KW}\n")
                 else:
-                    wx.MessageBox(
-                        "Failed to connect via Modbus RTU with the selected settings.",
-                        "Connection Error", wx.OK | wx.ICON_ERROR
-                    )
+                    wx.MessageBox("Failed to connect via Modbus RTU with the selected settings.",
+                                  "Connection Error", wx.OK | wx.ICON_ERROR)
             dlg.Destroy()
         except Exception as e:
             wx.MessageBox(f"Error in port settings: {e}", "Error", wx.OK | wx.ICON_ERROR)
 
-    # ---------- Auto-detect + connect ----------
+    def _update_title_connected(self):
+        port_label = getattr(self.serial, "portstr", None) or getattr(self.serial, "port", "")
+        self.SetTitle(
+            f"SE Wireless Development Tool (Modbus RTU) on {port_label} "
+            f"[{self.serial.baudrate},{self.serial.bytesize}{self._parity_char(self.serial.parity)}{self.serial.stopbits}]"
+        )
+
+    # Auto-detect + connect
     def _choose_usb_port(self, ports):
-        """Return best USB serial candidate or None."""
         candidates = []
         for p in ports:
             dev = (p.device or "").lower()
@@ -460,21 +464,13 @@ class seWSNViewLayout(wx.Frame):
                 any(x in dev for x in ["ttyusb", "ttyacm", "usbserial", "usbmodem"]) or
                 getattr(p, "vid", None) is not None
             )
-            if not looks_usb:
+            if not looks_usb or "bluetooth" in desc:
                 continue
-            if "bluetooth" in desc:
-                continue
-
             score = 0
-            if any(x in dev for x in ["ttyusb", "ttyacm", "usbserial", "usbmodem"]):
-                score += 50
-            if any(x in desc for x in ["ftdi", "cp210", "ch340", "ch341",
-                                       "prolific", "silicon labs", "cdc", "usb serial"]):
-                score += 30
-            if getattr(p, "vid", None) is not None:
-                score += 10
+            if any(x in dev for x in ["ttyusb", "ttyacm", "usbserial", "usbmodem"]): score += 50
+            if any(x in desc for x in ["ftdi", "cp210", "ch340", "ch341", "prolific", "silicon labs", "cdc", "usb serial"]): score += 30
+            if getattr(p, "vid", None) is not None: score += 10
             candidates.append((score, p))
-
         if not candidates:
             return None
         candidates.sort(key=lambda t: t[0], reverse=True)
@@ -486,19 +482,16 @@ class seWSNViewLayout(wx.Frame):
         except Exception as e:
             self.UpdatePageTerminal(f"Auto-detect: list_ports error: {e}\n")
             return
-
         if not ports:
             self.UpdatePageTerminal("Auto-detect: no serial ports found.\n")
             return
-
         cand = self._choose_usb_port(ports)
         if not cand:
             self.UpdatePageTerminal("Auto-detect: no USB serial device found.\n")
             return
 
-        self.serial.port = cand.device
-        if not getattr(self.serial, "baudrate", None):
-            self.serial.baudrate = 9600
+        self.serial.port     = cand.device
+        self.serial.baudrate = getattr(self.serial, "baudrate", 9600) or 9600
         self.serial.bytesize = getattr(self.serial, "bytesize", 8) or 8
         self.serial.parity   = getattr(self.serial, "parity", serial.PARITY_NONE) or serial.PARITY_NONE
         self.serial.stopbits = getattr(self.serial, "stopbits", serial.STOPBITS_ONE) or serial.STOPBITS_ONE
@@ -506,17 +499,13 @@ class seWSNViewLayout(wx.Frame):
         self.UpdatePageTerminal(f"Auto-detect: using {cand.device} ({cand.description})\n")
 
         if self.mb_connect_from_current_settings():
-            port_label = getattr(self.serial, "portstr", None) or getattr(self.serial, "port", "")
-            self.SetTitle(
-                f"SE Wireless Development Tool (Modbus RTU) on {port_label} "
-                f"[{self.serial.baudrate},{self.serial.bytesize}{self._parity_char(self.serial.parity)}{self.serial.stopbits}]"
-            )
+            self._update_title_connected()
             self.UpdatePageTerminal("Modbus RTU connected (auto-detected).\n")
             self.UpdatePageTerminal(f"pymodbus {getattr(pymodbus, '__version__', '?')} using {_FRAMER_KW}\n")
         else:
             self.UpdatePageTerminal("Auto-detect: failed to connect. Use Config → Port Settings…\n")
 
-    # ---------- Version-tolerant read wrapper (keywords only)
+    # Modbus read wrapper (keyword-only; tolerant of 'slave'/'unit')
     def _call_read(self, method_name, address, count, unit):
         if not self.mb:
             return None
@@ -544,10 +533,6 @@ class seWSNViewLayout(wx.Frame):
         unit = unit or self.modbus_slave_id
         return self._call_read("read_holding_registers", address, count, unit)
 
-    def _read_input(self, address, count=1, unit=None):
-        unit = unit or self.modbus_slave_id
-        return self._call_read("read_input_registers", address, count, unit)
-
     def mb_read_holding(self, address, count=1, unit=None):
         if not self.mb:
             wx.MessageBox("Modbus client is not connected.", "Error", wx.OK | wx.ICON_ERROR)
@@ -555,265 +540,87 @@ class seWSNViewLayout(wx.Frame):
         with self.mb_lock:
             rr = self._read_holding(address, count, unit)
         if rr is None:
-            self.UpdatePageTerminal(f"Read failed (None) at 0x{address:04X}\n")
-            return None
+            self.UpdatePageTerminal(f"Read failed (None) at 0x{address:04X}\n"); return None
         try:
             if rr.isError():
-                self.UpdatePageTerminal(f"Modbus error on 0x{address:04X}: {rr}\n")
-                return None
+                self.UpdatePageTerminal(f"Modbus error on 0x{address:04X}: {rr}\n"); return None
         except Exception:
             pass
         if getattr(rr, "registers", None) is None:
-            self.UpdatePageTerminal(f"No data returned at 0x{address:04X}: {rr}\n")
-            return None
+            self.UpdatePageTerminal(f"No data returned at 0x{address:04X}: {rr}\n"); return None
         return rr.registers
 
-    def mb_read_input(self, address, count=1, unit=None):
-        if not self.mb:
-            wx.MessageBox("Modbus client is not connected.", "Error", wx.OK | wx.ICON_ERROR)
-            return None
-        with self.mb_lock:
-            rr = self._read_input(address, count, unit)
-        if rr is None:
-            self.UpdatePageTerminal(f"Read failed (None) at 0x{address:04X}\n")
-            return None
-        try:
-            if rr.isError():
-                self.UpdatePageTerminal(f"Modbus error on 0x{address:04X}: {rr}\n")
-                return None
-        except Exception:
-            pass
-        if getattr(rr, "registers", None) is None:
-            self.UpdatePageTerminal(f"No data returned at 0x{address:04X}: {rr}\n")
-            return None
-        return rr.registers
-
-    # ---------- Basic converters
-    def regs_to_u16(self, regs):
-        return None if not regs else int(regs[0] & 0xFFFF)
-
-    def regs_to_s16(self, regs):
-        if not regs: return None
-        v = regs[0] & 0xFFFF
+    # Decoders / formatters
+    def _u16(self, w):  return int(w & 0xFFFF)
+    def _s16(self, w):
+        v = int(w & 0xFFFF)
         return v - 0x10000 if v & 0x8000 else v
 
-    def regs_to_u32_be(self, regs):
-        if not regs or len(regs) < 2: return None
-        return ((regs[0] & 0xFFFF) << 16) | (regs[1] & 0xFFFF)
+    def _u32_be(self, hi, lo): return ((hi & 0xFFFF) << 16) | (lo & 0xFFFF)
+    def _s32_be(self, hi, lo):
+        u = self._u32_be(hi, lo)
+        return u - 0x1_0000_0000 if u & 0x8000_0000 else u
 
-    def regs_to_ascii(self, regs):
-        if not regs: return ""
-        b = b"".join(int(r & 0xFFFF).to_bytes(2, "big") for r in regs)
-        return b.split(b"\x00", 1)[0].decode("ascii", errors="ignore")
+    def _decode(self, regs, codec):
+        if not regs: return None
+        if codec == "ascii":
+            b = b"".join(int(r & 0xFFFF).to_bytes(2, "big") for r in regs)
+            return b.split(b"\x00", 1)[0].decode("ascii", errors="ignore")
+        if codec == "u16": return self._u16(regs[0])
+        if codec == "s16": return self._s16(regs[0])
+        if codec == "u32":
+            if len(regs) < 2: return None
+            return self._u32_be(regs[0], regs[1])
+        if codec == "s32":
+            if len(regs) < 2: return None
+            return self._s32_be(regs[0], regs[1])
+        return None
 
-    # ---------- Identity / Info
-    def OnReadSerialNumber(self, event):
-        regs = self.mb_read_holding(0xC780, 15)
-        if regs is None: return
-        ser = self.regs_to_ascii(regs)
-        self.pageNetMon.sernumtxc.SetValue(ser)
-        self.UpdatePageTerminal(f"Serial #: {ser}\n")
+    def _fmt_scaled(self, val, scale: float, unit: str) -> str:
+        if val is None: return ""
+        if isinstance(val, (int, float)) and scale != 1:
+            v = val * scale
+            # decide decimals from scale (e.g., 0.1 -> 1, 0.01 -> 2)
+            from decimal import Decimal
+            dec = max(0, -Decimal(str(scale)).as_tuple().exponent)
+            s = f"{v:.{dec}f}"
+        elif isinstance(val, (int, float)):
+            s = f"{val:.0f}"
+        else:
+            s = str(val)
+        return f"{s} {unit}".strip()
 
-    def OnReadInverterSN(self, event):
-        regs = self.mb_read_holding(0xC78F, 10)
-        if regs is None: return
-        sn = self.regs_to_ascii(regs)
-        self.pageNetMon.invertsntxc.SetValue(sn)
-        self.UpdatePageTerminal(f"Inverter SN: {sn}\n")
+    # Generic read + show for a Reg (by name)
+    def read_and_show(self, reg_name: str):
+        reg = REG_BY_NAME.get(reg_name)
+        if not reg:
+            self.UpdatePageTerminal(f"Unknown register '{reg_name}'\n")
+            return
+        regs = self.mb_read_holding(reg.addr, reg.words)
+        if regs is None:
+            return
+        decoded = self._decode(regs, reg.codec)
+        text = self._fmt_scaled(decoded, reg.scale, reg.unit) if reg.codec != "ascii" else str(decoded)
+        ctrl = self.pageNetMon.field_by_name.get(reg.name)
+        if ctrl:
+            ctrl.SetValue(text)
+        self.UpdatePageTerminal(f"{reg.name}: {text}\n")
 
-    def OnReadProductionDate(self, event):
-        regs = self.mb_read_holding(0xC7A0, 4)
-        if regs is None: return
-        ds = self.regs_to_ascii(regs)
-        self.pageNetMon.proddatetxc.SetValue(ds)
-        self.UpdatePageTerminal(f"Production Date: {ds}\n")
-
-    def OnReadFW(self, event):
-        regs = self.mb_read_holding(0xC783, 1)
-        if regs is None: return
-        fw = self.regs_to_u16(regs)
-        self.pageNetMon.fwversiontxc.SetValue(str(fw))
-        self.UpdatePageTerminal(f"FW version: {fw}\n")
-
-    def OnReadHW(self, event):
-        regs = self.mb_read_holding(0xC784, 1)
-        if regs is None: return
-        hw = self.regs_to_u16(regs)
-        self.pageNetMon.hwvertxc.SetValue(str(hw))
-        self.UpdatePageTerminal(f"HW version: {hw}\n")
-
-    def OnReadModelNumber(self, event):
-        regs = self.mb_read_holding(0xC785, 1)
-        if regs is None: return
-        model = self.regs_to_u16(regs)
-        self.pageNetMon.modnumtxc.SetValue(str(model))
-        self.UpdatePageTerminal(f"Model: {model}\n")
-
-    def OnReadManufacturer(self, event):
-        regs = self.mb_read_holding(0xC786, 1)
-        if regs is None: return
-        man = self.regs_to_u16(regs)
-        self.pageNetMon.manufacturetxc.SetValue(str(man))
-        self.UpdatePageTerminal(f"Manufacturer: {man}\n")
-
-    # ---------- Runtime
-    def OnReadACInputVoltage(self, event):
-        regs = self.mb_read_holding(0x756A, 1)
-        if regs is None: return
-        v = self.regs_to_u16(regs)
-        self.pageNetMon.acinvolttxc.SetValue(str(v))
-        self.UpdatePageTerminal(f"AC Input Voltage: {v}\n")
-
-    def OnReadACInputCurrent(self, event):
-        regs = self.mb_read_holding(0x756B, 1)
-        if regs is None: return
-        a = self.regs_to_u16(regs)
-        self.pageNetMon.acincurrtxc.SetValue(str(a))
-        self.UpdatePageTerminal(f"AC Input Current: {a}\n")
-
-    def OnReadACInputPower(self, event):
-        regs = self.mb_read_holding(0x7571, 1)
-        if regs is None: return
-        p = self.regs_to_u16(regs)
-        self.pageNetMon.acinpowtxc.SetValue(str(p))
-        self.UpdatePageTerminal(f"AC Input Power: {p}\n")
-
-    def OnReadOutputActivePower(self, event):
-        regs = self.mb_read_holding(0x755E, 1)
-        if regs is None: return
-        p = self.regs_to_u16(regs)
-        self.UpdatePageTerminal(f"Output Active Power: {p}\n")
-
-    def OnReadPV1InputPower(self, event):
-        regs = self.mb_read_holding(0x7540, 1)
-        if regs is None: return
-        p = self.regs_to_u16(regs)
-        self.pageNetMon.pvinpowtxc.SetValue(str(p))
-        self.UpdatePageTerminal(f"PV1 Input Power: {p}\n")
-
-    def OnReadPV2InputPower(self, event):
-        regs = self.mb_read_holding(0x753D, 1)
-        if regs is None: return
-        p = self.regs_to_u16(regs)
-        self.UpdatePageTerminal(f"PV2 Input Power: {p}\n")
-
-    def OnReadBatteryVoltage(self, event):
-        regs = self.mb_read_holding(0x7530, 1)
-        if regs is None: return
-        v = self.regs_to_u16(regs)
-        self.pageNetMon.batteryvolttxc.SetValue(str(v))
-        self.UpdatePageTerminal(f"Battery Voltage: {v}\n")
-
-    def OnReadBatterySOC(self, event):
-        regs = self.mb_read_holding(0x7532, 1)
-        if regs is None: return
-        soc = self.regs_to_u16(regs)
-        self.pageNetMon.batterysoctxc.SetValue(str(soc))
-        self.UpdatePageTerminal(f"Battery SOC: {soc}\n")
-
-    def OnReadOutputFrequency(self, event):
-        regs = self.mb_read_holding(0x754A, 1)
-        if regs is None: return
-        f = self.regs_to_u16(regs)
-        self.pageNetMon.outfreqtxc.SetValue(str(f))
-        self.UpdatePageTerminal(f"Output Frequency: {f}\n")
-
-    def OnReadDeviceTemperature(self, event):
-        regs = self.mb_read_holding(0x7579, 1)
-        if regs is None: return
-        t = self.regs_to_s16(regs)
-        self.pageNetMon.temptxc.SetValue(str(t))
-        self.UpdatePageTerminal(f"Device Temperature: {t}\n")
-
-    # ---------- Summary
-    def OnReadLineChargeTotal(self, event):
-        regs = self.mb_read_holding(0xCB61, 2)
-        if regs is None: return
-        val = self.regs_to_u32_be(regs)
-        self.pageNetMon.totalacintxc.SetValue(str(val))
-        self.UpdatePageTerminal(f"Line Charge Total: {val}\n")
-
-    def OnReadPVGenerationTotal(self, event):
-        regs = self.mb_read_holding(0xCB56, 2)
-        if regs is None: return
-        val = self.regs_to_u32_be(regs)
-        self.pageNetMon.totalpvintxc.SetValue(str(val))
-        self.UpdatePageTerminal(f"PV Generation Total: {val}\n")
-
-    def OnReadLoadConsumptionTotal(self, event):
-        regs = self.mb_read_holding(0xCB58, 2)
-        if regs is None: return
-        val = self.regs_to_u32_be(regs)
-        self.pageNetMon.usedenergytotaltxc.SetValue(str(val))
-        self.UpdatePageTerminal(f"Load Consumption Total: {val}\n")
-
-    def OnReadBatteryChargeTotal(self, event):
-        regs = self.mb_read_holding(0xCB52, 2)
-        if regs is None: return
-        val = self.regs_to_u32_be(regs)
-        self.pageNetMon.batchgtotaltxc.SetValue(str(val))
-        self.UpdatePageTerminal(f"Battery Charge Total: {val}\n")
-
-    def OnReadBatteryDischargeTotal(self, event):
-        regs = self.mb_read_holding(0xCB54, 2)
-        if regs is None: return
-        val = self.regs_to_u32_be(regs)
-        self.pageNetMon.batdischgtotaltxc.SetValue(str(val))
-        self.UpdatePageTerminal(f"Battery Discharge Total: {val}\n")
-
-    def OnReadFromGridToLoad(self, event):
-        regs = self.mb_read_holding(0xCB63, 2)
-        if regs is None: return
-        val = self.regs_to_u32_be(regs)
-        self.UpdatePageTerminal(f"From Grid To Load: {val}\n")
-
-    def OnReadOperationHours(self, event):
-        regs = self.mb_read_holding(0xCBB0, 1)
-        if regs is None: return
-        hours = self.regs_to_u16(regs)
-        self.pageNetMon.hourstxc.SetValue(str(hours))
-        self.UpdatePageTerminal(f"Operation Hours: {hours}\n")
-
-    # ---------- Pull all data
-    def OnPullAll(self, event):
+    # Batch: Pull all data
+    def OnPullAll(self, _):
         if not self.mb:
             wx.MessageBox("Modbus client is not connected.", "Error", wx.OK | wx.ICON_ERROR)
             return
         self.UpdatePageTerminal("Pulling all data...\n")
-        calls = [
-            self.OnReadSerialNumber,
-            self.OnReadInverterSN,
-            self.OnReadProductionDate,
-            self.OnReadFW,
-            self.OnReadHW,
-            self.OnReadModelNumber,
-            self.OnReadManufacturer,
-            self.OnReadACInputVoltage,
-            self.OnReadACInputCurrent,
-            self.OnReadACInputPower,
-            self.OnReadPV1InputPower,
-            self.OnReadPV2InputPower,
-            self.OnReadBatteryVoltage,
-            self.OnReadBatterySOC,
-            self.OnReadOutputFrequency,
-            self.OnReadDeviceTemperature,
-            self.OnReadLineChargeTotal,
-            self.OnReadPVGenerationTotal,
-            self.OnReadLoadConsumptionTotal,
-            self.OnReadBatteryChargeTotal,
-            self.OnReadBatteryDischargeTotal,
-            self.OnReadFromGridToLoad,
-            self.OnReadOperationHours,
-        ]
-        for fn in calls:
+        for reg in DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA:
             try:
-                fn(None)
+                self.read_and_show(reg.name)
                 time.sleep(0.02)
             except Exception as e:
-                self.UpdatePageTerminal(f"Error during batch: {e}\n")
+                self.UpdatePageTerminal(f"Error during {reg.name}: {e}\n")
         self.UpdatePageTerminal("Done pulling all data.\n")
 
-# -----------------------------
+# App
 class MyApp(wx.App):
     def OnInit(self):
         self.frame = seWSNViewLayout(None, -1, "")
