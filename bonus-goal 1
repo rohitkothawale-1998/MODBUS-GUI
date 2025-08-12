@@ -1,0 +1,7 @@
+Stretch Goal #1 (Bonus 1):
+  It will be really nice to reach further with the MPS system running parameters, often times, they are accessed (Read or Write) from the SGR Power Manager SW. 
+  I wish we can create necessary GUI entries for read and write of those registers. 
+  It will be used for setting (just a quick example), such as:
+    The audio buzzer 
+    System level warnings
+    User defined Runtime parameters, such as the Upper limit of the Diesel generator Threshold (stop of the gen), or, the lower threlhold (for turning on the generator)
