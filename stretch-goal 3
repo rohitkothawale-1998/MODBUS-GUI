@@ -1,0 +1,5 @@
+Stretch Goal #3 (Bonus 3):
+  FW upload (indeed the current code has snippets in there for file loading and file dissemenation, and file xfer over the serial port)
+    -"Talk" to the Bootloader (we might need to consult SGR or our Engineers at Shanghai)
+    -Make a file selector (already done the current code)
+    -then, upload the BIN File over to the serial port.
