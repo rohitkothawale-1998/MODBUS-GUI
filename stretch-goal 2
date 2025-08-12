@@ -1,0 +1,6 @@
+Stretch Goal #2 (Bonus 2): 
+  Making this GUI a special testing energy that can do the following:
+    -Stress test the MPS, set a certain command to run at a certain freq. using this to AUTO test the MPS FW and MODBUS stability
+    -Extend the above feature, by adding automatic Modbus parser, that can auto filter the result and spot any issues coming from the MPS internal MCU (the brain at the end of the Modbus).
+Save the test result as text based log files, or, CSVs. 
+Save the testing script as a loadable file, so, you can always re-load and re-run
