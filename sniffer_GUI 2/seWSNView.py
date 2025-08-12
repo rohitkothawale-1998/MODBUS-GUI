@@ -16,6 +16,8 @@ import serial
 import threading
 import time
 
+from serial.tools import list_ports  # <-- NEW: for auto-detect
+
 import pymodbus
 from pymodbus.client import ModbusSerialClient
 
@@ -62,7 +64,7 @@ ID_READ_BATTERY_DISCHARGE_TOTAL = wx.NewId()
 ID_READ_FROM_GRID_TO_LOAD       = wx.NewId()
 ID_READ_OPERATION_HOURS         = wx.NewId()
 
-# NEW: menu item id for "Pull all data"
+# Existing extra feature
 ID_PULL_ALL                 = wx.NewId()
 
 # -----------------------------
@@ -125,7 +127,7 @@ class TerminalSettingsDialog(wx.Dialog):
         self.EndModal(wx.ID_CANCEL)
 
 # -----------------------------
-# Menubar (same structure) + new "Pull all data" menu
+# Menubar (same structure) + existing "Pull all data"
 class seWSNMenubar(wx.Frame):
     def __init__(self, parent):
         parent.seWSNView_menubar = wx.MenuBar()
@@ -180,7 +182,6 @@ class seWSNMenubar(wx.Frame):
         parent.Bind(wx.EVT_MENU, parent.OnHelp, item_help)
         parent.seWSNView_menubar.Append(help_menu, "&Help")
 
-        # NEW: top-level "Pull all data" menu with one item
         pull_menu = wx.Menu()
         item_pull = pull_menu.Append(ID_PULL_ALL, "&Pull all data", "")
         parent.Bind(wx.EVT_MENU, parent.OnPullAll, item_pull)
@@ -359,12 +360,13 @@ class seWSNViewLayout(wx.Frame):
         self.Bind(wx.EVT_MENU, self.OnReadBatteryDischargeTotal, id=ID_READ_BATTERY_DISCHARGE_TOTAL)
         self.Bind(wx.EVT_MENU, self.OnReadFromGridToLoad,        id=ID_READ_FROM_GRID_TO_LOAD)
         self.Bind(wx.EVT_MENU, self.OnReadOperationHours,        id=ID_READ_OPERATION_HOURS)
-
-        # NEW: bind "Pull all data"
         self.Bind(wx.EVT_MENU, self.OnPullAll,                   id=ID_PULL_ALL)
 
         # Window close
         self.Bind(wx.EVT_CLOSE, self.OnClose)
+
+        # NEW: auto-detect USB serial and connect after the window is up
+        wx.CallAfter(self.autodetect_usb_and_connect)
 
     # ---------- UI helpers
     def UpdatePageTerminal(self, s):
@@ -479,6 +481,78 @@ class seWSNViewLayout(wx.Frame):
             dlg.Destroy()
         except Exception as e:
             wx.MessageBox(f"Error in port settings: {e}", "Error", wx.OK | wx.ICON_ERROR)
+
+    # ---------- NEW: auto-detect + connect ----------
+    def _choose_usb_port(self, ports):
+        """Return best USB serial candidate or None."""
+        candidates = []
+        for p in ports:
+            dev = (p.device or "").lower()
+            desc = (p.description or "").lower()
+            # Must look like a USB/CDC/bridge device
+            looks_usb = (
+                "usb" in desc or
+                any(x in dev for x in ["ttyusb", "ttyacm", "usbserial", "usbmodem"]) or
+                getattr(p, "vid", None) is not None
+            )
+            if not looks_usb:
+                continue
+            if "bluetooth" in desc:
+                continue  # avoid virtual BT serials
+
+            score = 0
+            if any(x in dev for x in ["ttyusb", "ttyacm", "usbserial", "usbmodem"]):
+                score += 50
+            if any(x in desc for x in ["ftdi", "cp210", "ch340", "ch341",
+                                       "prolific", "silicon labs", "cdc", "usb serial"]):
+                score += 30
+            if getattr(p, "vid", None) is not None:
+                score += 10
+            candidates.append((score, p))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda t: t[0], reverse=True)
+        return candidates[0][1]
+
+    def autodetect_usb_and_connect(self):
+        """Detect a USB serial port, select it, and connect automatically."""
+        try:
+            ports = list(list_ports.comports())
+        except Exception as e:
+            self.UpdatePageTerminal(f"Auto-detect: list_ports error: {e}\n")
+            return
+
+        if not ports:
+            self.UpdatePageTerminal("Auto-detect: no serial ports found.\n")
+            return
+
+        cand = self._choose_usb_port(ports)
+        if not cand:
+            self.UpdatePageTerminal("Auto-detect: no USB serial device found.\n")
+            return
+
+        # Assign to the existing Serial object so the config dialog also sees it
+        self.serial.port = cand.device
+        # Ensure 9600 8N1 defaults unless user changed them later
+        if not getattr(self.serial, "baudrate", None):
+            self.serial.baudrate = 9600
+        self.serial.bytesize = getattr(self.serial, "bytesize", 8) or 8
+        self.serial.parity   = getattr(self.serial, "parity", serial.PARITY_NONE) or serial.PARITY_NONE
+        self.serial.stopbits = getattr(self.serial, "stopbits", serial.STOPBITS_ONE) or serial.STOPBITS_ONE
+
+        self.UpdatePageTerminal(f"Auto-detect: using {cand.device} ({cand.description})\n")
+
+        if self.mb_connect_from_current_settings():
+            port_label = getattr(self.serial, "portstr", None) or getattr(self.serial, "port", "")
+            self.SetTitle(
+                f"SE Wireless Development Tool (Modbus RTU) on {port_label} "
+                f"[{self.serial.baudrate},{self.serial.bytesize}{self._parity_char(self.serial.parity)}{self.serial.stopbits}]"
+            )
+            self.UpdatePageTerminal("Modbus RTU connected (auto-detected).\n")
+            self.UpdatePageTerminal(f"pymodbus {getattr(pymodbus, '__version__', '?')} using {_FRAMER_KW}\n")
+        else:
+            self.UpdatePageTerminal("Auto-detect: failed to connect. Use Config → Port Settings…\n")
 
     # ---------- Version-tolerant read wrapper (keywords only)
     def _call_read(self, method_name, address, count, unit):
@@ -747,7 +821,7 @@ class seWSNViewLayout(wx.Frame):
         self.pageNetMon.hourstxc.SetValue(str(hours))
         self.UpdatePageTerminal(f"Operation Hours: {hours}\n")
 
-    # ---------- NEW: Pull everything at once
+    # ---------- Pull all data (existing extra)
     def OnPullAll(self, event):
         if not self.mb:
             wx.MessageBox("Modbus client is not connected.", "Error", wx.OK | wx.ICON_ERROR)
