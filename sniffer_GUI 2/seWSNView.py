@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 # SE Wireless Development Tool (Modbus RTU) — table-driven registers
 #
-# Requires:
-#   pip install wxPython pymodbus pyserial
-#
-# UI: three columns (Device / Run-time / Summary), Terminal View, "Pull all data",
-# auto USB serial detection. Values are decoded/scaled from the Reg tables below.
+# Adds: Pull data → Start/Stop auto pull (10s) and Clear values
+# Requires: pip install wxPython pymodbus pyserial
 
 import wx
 import wxSerialConfigDialog
@@ -29,16 +26,16 @@ except Exception:
     _FRAMER_KW = 'method="rtu"'
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Register table (your definitions)
+# Register table
 
 @dataclass(frozen=True)
 class Reg:
-    name: str           # UI label
-    addr: int           # Modbus address (decimal)
-    words: int          # number of 16-bit words
+    name: str
+    addr: int
+    words: int
     codec: str          # ascii | u16 | s16 | u32 | s32
-    scale: float        # multiply after decoding
-    unit: str           # engineering unit for display
+    scale: float
+    unit: str
 
 DEVICE_DATA: List[Reg] = [
     Reg("Serial #",         0xC780, 15, "ascii", 1,     ""),
@@ -55,8 +52,6 @@ RUNTIME_DATA: List[Reg] = [
     Reg("AC Input Current",   0x756B, 1, "s16",  0.1,   "A"),
     Reg("AC Input Power",     0x7571, 1, "s16",  1,     "VA"),
     Reg("Output Active Power",0x755E, 1, "u16",  1,     "W"),
-    # Reg("PV Input Voltage", 0x753B, 1, "u16", 0.1, "V"),
-    # Reg("PV Input Current", 0x753C, 1, "u16", 0.1, "A"),
     Reg("PV1 Input Power",    0x7540, 1, "u16",  1,     "W"),
     Reg("PV2 Input Power",    0x753D, 1, "u16",  1,     "W"),
     Reg("Battery Voltage",    0x7530, 1, "u16",  0.1,   "V"),
@@ -85,9 +80,13 @@ ID_EXIT                     = wx.NewId()
 ID_SETTINGS                 = wx.NewId()
 ID_TERM                     = wx.NewId()
 ID_HELP                     = wx.NewId()
-ID_PULL_ALL                 = wx.NewId()
 
-# Keep these so your existing Send menu entries still work:
+ID_PULL_ALL                 = wx.NewId()
+ID_PULL_START               = wx.NewId()
+ID_PULL_STOP                = wx.NewId()
+ID_PULL_CLEAR               = wx.NewId()
+
+# Keep Send menu IDs for one-off reads
 ID_READ_SERIAL_NUMBER       = wx.NewId()
 ID_READ_INVERTER_SN         = wx.NewId()
 ID_READ_PRODUCTION_DATE     = wx.NewId()
@@ -124,8 +123,7 @@ class TerminalSetup:
 
 class TerminalSettingsDialog(wx.Dialog):
     def __init__(self, *args, **kwds):
-        self.settings = kwds['settings']
-        del kwds['settings']
+        self.settings = kwds['settings']; del kwds['settings']
         kwds["style"] = wx.DEFAULT_DIALOG_STYLE
         super().__init__(*args, **kwds)
         self.checkbox_echo = wx.CheckBox(self, -1, "Local Echo")
@@ -154,7 +152,6 @@ class TerminalSettingsDialog(wx.Dialog):
         self.checkbox_echo.SetValue(self.settings.echo)
         self.checkbox_unprintable.SetValue(self.settings.unprintable)
         self.radio_box_newline.SetSelection(self.settings.newline)
-
         self.Bind(wx.EVT_BUTTON, self.OnOK, id=self.button_ok.GetId())
         self.Bind(wx.EVT_BUTTON, self.OnCancel, id=self.button_cancel.GetId())
 
@@ -167,7 +164,7 @@ class TerminalSettingsDialog(wx.Dialog):
     def OnCancel(self, _):
         self.EndModal(wx.ID_CANCEL)
 
-# Menubar (adds "Pull all data")
+# Menubar
 class seWSNMenubar(wx.Frame):
     def __init__(self, parent):
         parent.seWSNView_menubar = wx.MenuBar()
@@ -223,9 +220,17 @@ class seWSNMenubar(wx.Frame):
         parent.seWSNView_menubar.Append(help_menu, "&Help")
 
         pull_menu = wx.Menu()
-        pull_menu.Append(ID_PULL_ALL, "&Pull all data", "")
-        parent.Bind(wx.EVT_MENU, parent.OnPullAll, id=ID_PULL_ALL)
-        parent.seWSNView_menubar.Append(pull_menu, "Pull all data")
+        pull_menu.Append(ID_PULL_ALL,   "&Pull all data once", "")
+        pull_menu.AppendSeparator()
+        pull_menu.Append(ID_PULL_START, "Start auto pull (10s)", "")
+        pull_menu.Append(ID_PULL_STOP,  "Stop auto pull", "")
+        pull_menu.AppendSeparator()
+        pull_menu.Append(ID_PULL_CLEAR, "Clear values", "")
+        parent.Bind(wx.EVT_MENU, parent.OnPullAll,      id=ID_PULL_ALL)
+        parent.Bind(wx.EVT_MENU, parent.OnStartAutoPull,id=ID_PULL_START)
+        parent.Bind(wx.EVT_MENU, parent.OnStopAutoPull, id=ID_PULL_STOP)
+        parent.Bind(wx.EVT_MENU, parent.OnClearValues,  id=ID_PULL_CLEAR)
+        parent.seWSNView_menubar.Append(pull_menu, "Pull data")
 
 # Pages
 class PageTerminalView(wx.Panel):
@@ -263,23 +268,16 @@ class PageNetworkMonitor(wx.Panel):
             self.field_by_name[reg.name] = txt
             self.field_by_addr[reg.addr] = txt
 
-        # Columns
         dev_col, dev_grid = make_column("Device Data")
-        for r in DEVICE_DATA:
-            add_row(dev_grid, r)
-
+        for r in DEVICE_DATA: add_row(dev_grid, r)
         run_col, run_grid = make_column("Run-time Data")
-        for r in RUNTIME_DATA:
-            add_row(run_grid, r)
-
+        for r in RUNTIME_DATA: add_row(run_grid, r)
         sum_col, sum_grid = make_column("Summary Data")
-        for r in SUMMARY_DATA:
-            add_row(sum_grid, r)
+        for r in SUMMARY_DATA: add_row(sum_grid, r)
 
         root.Add(dev_col, 1, wx.EXPAND | wx.ALL, 6)
         root.Add(run_col, 1, wx.EXPAND | wx.ALL, 6)
         root.Add(sum_col, 1, wx.EXPAND | wx.ALL, 6)
-
         self.SetSizer(root)
 
 # Main window
@@ -296,6 +294,13 @@ class seWSNViewLayout(wx.Frame):
         self.mb: Optional[ModbusSerialClient] = None
         self.mb_lock = threading.Lock()
         self.modbus_slave_id = 1  # change if your device uses another unit id
+
+        # Auto-pull timer (10s)
+        self.auto_period_ms = 10_000
+        self.auto_timer = wx.Timer(self)
+        self._auto_running = False
+        self._pulling = False
+        self.Bind(wx.EVT_TIMER, self.OnAutoPullTimer, self.auto_timer)
 
         seWSNMenubar(self)
 
@@ -336,22 +341,24 @@ class seWSNViewLayout(wx.Frame):
         bind(wx.EVT_MENU, lambda e: self.read_and_show("Battery Discharge Total"),id=ID_READ_BATTERY_DISCHARGE_TOTAL)
         bind(wx.EVT_MENU, lambda e: self.read_and_show("From Grid To Load"),      id=ID_READ_FROM_GRID_TO_LOAD)
         bind(wx.EVT_MENU, lambda e: self.read_and_show("Operation Hours"),        id=ID_READ_OPERATION_HOURS)
-        bind(wx.EVT_MENU, self.OnPullAll,                                         id=ID_PULL_ALL)
 
         self.Bind(wx.EVT_CLOSE, self.OnClose)
         wx.CallAfter(self.autodetect_usb_and_connect)
 
     # UI helpers
     def UpdatePageTerminal(self, s):
-        try:
-            self.pageTerminal.text_ctrl_output.AppendText(str(s))
-        except Exception:
-            pass
+        try: self.pageTerminal.text_ctrl_output.AppendText(str(s))
+        except Exception: pass
 
     # Settings / Help / Exit
     def OnExit(self, _): self.Close()
 
     def OnClose(self, _):
+        try:
+            if self.auto_timer.IsRunning():
+                self.auto_timer.Stop()
+        except Exception:
+            pass
         try:
             if self.mb:
                 try:
@@ -374,8 +381,7 @@ class seWSNViewLayout(wx.Frame):
 
     def OnTermSettings(self, _):
         dlg = TerminalSettingsDialog(None, -1, "", settings=self.settings)
-        dlg.ShowModal()
-        dlg.Destroy()
+        dlg.ShowModal(); dlg.Destroy()
 
     # Modbus setup
     def _parity_char(self, pyserial_parity):
@@ -392,38 +398,28 @@ class seWSNViewLayout(wx.Frame):
         try:
             if self.mb:
                 try:
-                    if getattr(self.mb, "connected", False):
-                        self.mb.close()
+                    if getattr(self.mb, "connected", False): self.mb.close()
                 except Exception:
                     self.mb.close()
         except Exception:
             pass
 
         port_str = getattr(self.serial, "portstr", None) or getattr(self.serial, "port", None)
-
         if _HAS_FRAMER:
             self.mb = ModbusSerialClient(
-                port=port_str,
-                framer=FramerType.RTU,
-                baudrate=self.serial.baudrate,
-                bytesize=self.serial.bytesize,
+                port=port_str, framer=FramerType.RTU,
+                baudrate=self.serial.baudrate, bytesize=self.serial.bytesize,
                 parity=self._parity_char(self.serial.parity),
-                stopbits=self.serial.stopbits,
-                timeout=self.serial.timeout or 1.0,
+                stopbits=self.serial.stopbits, timeout=self.serial.timeout or 1.0,
             )
         else:
             self.mb = ModbusSerialClient(
-                method="rtu",
-                port=port_str,
-                baudrate=self.serial.baudrate,
-                bytesize=self.serial.bytesize,
+                method="rtu", port=port_str,
+                baudrate=self.serial.baudrate, bytesize=self.serial.bytesize,
                 parity=self._parity_char(self.serial.parity),
-                stopbits=self.serial.stopbits,
-                timeout=self.serial.timeout or 1.0,
+                stopbits=self.serial.stopbits, timeout=self.serial.timeout or 1.0,
             )
-
-        ok = self.mb.connect()
-        return bool(ok)
+        return bool(self.mb.connect())
 
     def OnPortSettings(self, _=None):
         try:
@@ -464,15 +460,13 @@ class seWSNViewLayout(wx.Frame):
                 any(x in dev for x in ["ttyusb", "ttyacm", "usbserial", "usbmodem"]) or
                 getattr(p, "vid", None) is not None
             )
-            if not looks_usb or "bluetooth" in desc:
-                continue
+            if not looks_usb or "bluetooth" in desc: continue
             score = 0
             if any(x in dev for x in ["ttyusb", "ttyacm", "usbserial", "usbmodem"]): score += 50
             if any(x in desc for x in ["ftdi", "cp210", "ch340", "ch341", "prolific", "silicon labs", "cdc", "usb serial"]): score += 30
             if getattr(p, "vid", None) is not None: score += 10
             candidates.append((score, p))
-        if not candidates:
-            return None
+        if not candidates: return None
         candidates.sort(key=lambda t: t[0], reverse=True)
         return candidates[0][1]
 
@@ -480,15 +474,12 @@ class seWSNViewLayout(wx.Frame):
         try:
             ports = list(list_ports.comports())
         except Exception as e:
-            self.UpdatePageTerminal(f"Auto-detect: list_ports error: {e}\n")
-            return
+            self.UpdatePageTerminal(f"Auto-detect: list_ports error: {e}\n"); return
         if not ports:
-            self.UpdatePageTerminal("Auto-detect: no serial ports found.\n")
-            return
+            self.UpdatePageTerminal("Auto-detect: no serial ports found.\n"); return
         cand = self._choose_usb_port(ports)
         if not cand:
-            self.UpdatePageTerminal("Auto-detect: no USB serial device found.\n")
-            return
+            self.UpdatePageTerminal("Auto-detect: no USB serial device found.\n"); return
 
         self.serial.port     = cand.device
         self.serial.baudrate = getattr(self.serial, "baudrate", 9600) or 9600
@@ -507,27 +498,17 @@ class seWSNViewLayout(wx.Frame):
 
     # Modbus read wrapper (keyword-only; tolerant of 'slave'/'unit')
     def _call_read(self, method_name, address, count, unit):
-        if not self.mb:
-            return None
+        if not self.mb: return None
         fn = getattr(self.mb, method_name, None)
-        if not fn:
-            return None
-        try:
-            return fn(address=address, count=count, slave=unit)
-        except TypeError:
-            pass
-        try:
-            return fn(address=address, count=count, unit=unit)
-        except TypeError:
-            pass
-        try:
-            return fn(address=address, count=count)
-        except TypeError:
-            pass
-        try:
-            return fn(address=address)
-        except Exception:
-            return None
+        if not fn: return None
+        try:    return fn(address=address, count=count, slave=unit)
+        except TypeError: pass
+        try:    return fn(address=address, count=count, unit=unit)
+        except TypeError: pass
+        try:    return fn(address=address, count=count)
+        except TypeError: pass
+        try:    return fn(address=address)
+        except Exception: return None
 
     def _read_holding(self, address, count=1, unit=None):
         unit = unit or self.modbus_slave_id
@@ -553,13 +534,10 @@ class seWSNViewLayout(wx.Frame):
     # Decoders / formatters
     def _u16(self, w):  return int(w & 0xFFFF)
     def _s16(self, w):
-        v = int(w & 0xFFFF)
-        return v - 0x10000 if v & 0x8000 else v
-
+        v = int(w & 0xFFFF);  return v - 0x10000 if v & 0x8000 else v
     def _u32_be(self, hi, lo): return ((hi & 0xFFFF) << 16) | (lo & 0xFFFF)
     def _s32_be(self, hi, lo):
-        u = self._u32_be(hi, lo)
-        return u - 0x1_0000_0000 if u & 0x8000_0000 else u
+        u = self._u32_be(hi, lo);  return u - 0x1_0000_0000 if u & 0x8000_0000 else u
 
     def _decode(self, regs, codec):
         if not regs: return None
@@ -579,11 +557,9 @@ class seWSNViewLayout(wx.Frame):
     def _fmt_scaled(self, val, scale: float, unit: str) -> str:
         if val is None: return ""
         if isinstance(val, (int, float)) and scale != 1:
-            v = val * scale
-            # decide decimals from scale (e.g., 0.1 -> 1, 0.01 -> 2)
             from decimal import Decimal
             dec = max(0, -Decimal(str(scale)).as_tuple().exponent)
-            s = f"{v:.{dec}f}"
+            s = f"{val * scale:.{dec}f}"
         elif isinstance(val, (int, float)):
             s = f"{val:.0f}"
         else:
@@ -594,31 +570,62 @@ class seWSNViewLayout(wx.Frame):
     def read_and_show(self, reg_name: str):
         reg = REG_BY_NAME.get(reg_name)
         if not reg:
-            self.UpdatePageTerminal(f"Unknown register '{reg_name}'\n")
-            return
+            self.UpdatePageTerminal(f"Unknown register '{reg_name}'\n"); return
         regs = self.mb_read_holding(reg.addr, reg.words)
-        if regs is None:
-            return
+        if regs is None: return
         decoded = self._decode(regs, reg.codec)
         text = self._fmt_scaled(decoded, reg.scale, reg.unit) if reg.codec != "ascii" else str(decoded)
         ctrl = self.pageNetMon.field_by_name.get(reg.name)
-        if ctrl:
-            ctrl.SetValue(text)
+        if ctrl: ctrl.SetValue(text)
         self.UpdatePageTerminal(f"{reg.name}: {text}\n")
 
-    # Batch: Pull all data
+    # Batch: Pull all data (once)
     def OnPullAll(self, _):
+        if self._pulling:
+            self.UpdatePageTerminal("Pull already in progress.\n"); return
         if not self.mb:
-            wx.MessageBox("Modbus client is not connected.", "Error", wx.OK | wx.ICON_ERROR)
-            return
+            wx.MessageBox("Modbus client is not connected.", "Error", wx.OK | wx.ICON_ERROR); return
+        self._pulling = True
         self.UpdatePageTerminal("Pulling all data...\n")
-        for reg in DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA:
-            try:
-                self.read_and_show(reg.name)
-                time.sleep(0.02)
-            except Exception as e:
-                self.UpdatePageTerminal(f"Error during {reg.name}: {e}\n")
-        self.UpdatePageTerminal("Done pulling all data.\n")
+        try:
+            for reg in DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA:
+                try:
+                    self.read_and_show(reg.name)
+                    time.sleep(0.02)
+                except Exception as e:
+                    self.UpdatePageTerminal(f"Error during {reg.name}: {e}\n")
+        finally:
+            self._pulling = False
+            self.UpdatePageTerminal("Done pulling all data.\n")
+
+    # Auto-pull controls
+    def OnStartAutoPull(self, _):
+        if not self.mb:
+            wx.MessageBox("Modbus client is not connected.", "Error", wx.OK | wx.ICON_ERROR); return
+        if self._auto_running:
+            self.UpdatePageTerminal("Auto pull already running.\n"); return
+        self._auto_running = True
+        self.auto_timer.Start(self.auto_period_ms)
+        self.UpdatePageTerminal(f"Auto pull started (every {self.auto_period_ms/1000:.0f}s).\n")
+        # Optional: immediate first pull
+        wx.CallAfter(self.OnPullAll, None)
+
+    def OnStopAutoPull(self, _):
+        if self.auto_timer.IsRunning():
+            self.auto_timer.Stop()
+        self._auto_running = False
+        self.UpdatePageTerminal("Auto pull stopped.\n")
+
+    def OnAutoPullTimer(self, _):
+        if not self._pulling:
+            self.OnPullAll(None)
+
+    # Clear values
+    def OnClearValues(self, _):
+        for ctrl in self.pageNetMon.field_by_name.values():
+            try: ctrl.SetValue("")
+            except Exception: pass
+        self.UpdatePageTerminal("Cleared all values.\n")
 
 # App
 class MyApp(wx.App):
