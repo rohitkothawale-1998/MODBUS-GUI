@@ -244,7 +244,7 @@ class PageTerminalView(wx.Panel):
         self.SetSizer(s)
 
 class PageNetworkMonitor(wx.Panel):
-    """Three clean columns; evenly fills vertical space (no blank bottoms)."""
+    """Three clean columns at top; alarms box spans full width below."""
     def __init__(self, parent):
         super().__init__(parent=parent, id=wx.ID_ANY)
         self.SetDoubleBuffered(True)
@@ -263,7 +263,8 @@ class PageNetworkMonitor(wx.Panel):
         self.field_by_name: Dict[str, wx.TextCtrl] = {}
         self.field_by_addr: Dict[int, wx.TextCtrl] = {}
 
-        root = wx.BoxSizer(wx.HORIZONTAL)
+        # Top row: 3 columns
+        top = wx.BoxSizer(wx.HORIZONTAL)
 
         def make_column(title: str, regs: List[Reg]):
             box = wx.StaticBox(self, wx.ID_ANY, title)
@@ -291,15 +292,79 @@ class PageNetworkMonitor(wx.Panel):
             col.Add(grid, 1, wx.EXPAND | wx.ALL, 8)
             return col
 
-        root.Add(make_column("Device Data",  DEVICE_DATA), 1, wx.EXPAND | wx.ALL, 6)
-        root.Add(make_column("Run-time Data", RUNTIME_DATA), 1, wx.EXPAND | wx.ALL, 6)
-        root.Add(make_column("Summary Data", SUMMARY_DATA), 1, wx.EXPAND | wx.ALL, 6)
+        top.Add(make_column("Device Data",  DEVICE_DATA), 1, wx.EXPAND | wx.ALL, 6)
+        top.Add(make_column("Run-time Data", RUNTIME_DATA), 1, wx.EXPAND | wx.ALL, 6)
+        top.Add(make_column("Summary Data", SUMMARY_DATA), 1, wx.EXPAND | wx.ALL, 6)
+
+        # Bottom: alarms box (spans full width)
+        fault_box = wx.StaticBox(self, wx.ID_ANY, "Active Alarms / Faults")
+        fault_col = wx.StaticBoxSizer(fault_box, wx.VERTICAL)
+        self.faults_text = wx.TextCtrl(
+            self, wx.ID_ANY, "",
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2
+        )
+        self.faults_text.SetMinSize((-1, 120))
+        fault_col.Add(self.faults_text, 1, wx.EXPAND | wx.ALL, 8)
+
+        root = wx.BoxSizer(wx.VERTICAL)
+        root.Add(top, 1, wx.EXPAND)
+        root.Add(fault_col, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
 
         self.SetSizer(root)
 
 # Main window
 class seWSNViewLayout(wx.Frame):
     POLL_SECONDS_DEFAULT = 10
+
+    # Alarm descriptions
+    FAULT_DESC: Dict[int, str] = {
+        1: "Battery under voltage warning",
+        2: "Battery under voltage protection ",
+        3: "Average battery discharge current over current protection",
+        4: "Instantaneous battery discharge over current protection",
+        5: "Battery not connected ",
+        6: "Battery over voltage ",
+        7: "BMS low battery alarm",
+        8: "BMS low battery protection",
+        9: "Bypass overload protection",
+        10: "Battery output overload protection",
+        11: "Battery inverter output short circuit",
+        12: "The AC output of the battery inverter over circuit",
+        13: "The DC component of the battery inverter voltage is abnormal",
+        14: "Bus over voltage software sampling protection",
+        15: "Bus over voltage hardware sampling protection",
+        16: "Bus under voltage protection",
+        17: "Bus short circuit protection",
+        18: "The PV input voltage is over voltage",
+        20: "PV over current protection",
+        22: "The PV heat sink is overheated",
+        23: "The AC heat sink is overheated.",
+        24: "The temperature of the main transformer is overheated",
+        25: "Ac input relay short circuit",
+        27: "Fan Failure",
+        30: "Type detection error",
+        33: "Parallel control can communication is faulty",
+        34: "Parallel control can communication is faulty",
+        35: "Parallel mode is faulty ",
+        36: "Parallel current sharing fault",
+        37: "Parallel ID setting error",
+        38: "Inconsistent Battery in parallel mode",
+        39: "Inconsistent AC input source in parallel mode",
+        40: "The parallel mode synchronization fails",
+        41: "Inconsistent system firmware version in parallel mode",
+        42: "The parallel communication cable is faulty",
+        43: "Serial number error",       
+        49: "BMS communication error",
+        50: "BMS other alarm",
+        51: "BMS battery over temperature",
+        52: "BMS battery over current",
+        53: "BMS battery over voltage",
+        54: "BMS battery low voltage",
+        55: "BMS battery low temperature",
+        56: "PD communication error",
+        58: "BMS pack number mismatch",
+        # extend with more IDs as you map them
+    }
 
     def __init__(self, *args, **kwds):
         super().__init__(*args, **kwds)
@@ -323,17 +388,16 @@ class seWSNViewLayout(wx.Frame):
         # ── Top-level panel holding a header (logo) + the notebook
         p = wx.Panel(self)
 
-        # Header bar with right-aligned logo
+        # Header bar with centered logo
         self.header = wx.Panel(p)
         header_sizer = wx.BoxSizer(wx.HORIZONTAL)
         header_sizer.AddStretchSpacer(1)
-
         bmp = self._load_logo_bitmap(height_px=28)
         self.logo_ctrl = wx.StaticBitmap(self.header, bitmap=bmp)
         header_sizer.Add(self.logo_ctrl, 0, wx.ALL | wx.ALIGN_CENTER, 6)
         header_sizer.AddStretchSpacer(1)
         self.header.SetSizer(header_sizer)
-        self.header.SetMinSize((-1, bmp.GetHeight() + 10))  # a bit of padding
+        self.header.SetMinSize((-1, bmp.GetHeight() + 10))
 
         # Main notebook
         self.nb = wx.Notebook(p)
@@ -379,16 +443,13 @@ class seWSNViewLayout(wx.Frame):
         self.Bind(wx.EVT_CLOSE, self.OnClose)
         wx.CallAfter(self.autodetect_usb_and_connect)
 
-
     def _set_notebook_tab_font(self, point_size_increase=3):
-        """Increase the font size of the notebook tabs."""
         f = self.nb.GetFont()
         f.SetPointSize(f.GetPointSize() + int(point_size_increase))
         self.nb.SetFont(f)
-    # Make sure the new tab height is respected
         self.nb.Layout()
         self.nb.Refresh()
-        self.GetChildren()[0].Layout()  # layout the top panel too
+        self.GetChildren()[0].Layout()
 
     # Load and scale a logo; fall back to a stock bitmap if not found
     def _load_logo_bitmap(self, height_px: int = 28) -> wx.Bitmap:
@@ -398,11 +459,9 @@ class seWSNViewLayout(wx.Frame):
             if os.path.exists(path):
                 img = wx.Image(path)
                 if img.IsOk():
-                    # keep aspect ratio, scale by height
                     w = max(1, int(img.GetWidth() * (height_px / float(img.GetHeight()))))
                     img = img.Scale(w, height_px, wx.IMAGE_QUALITY_HIGH)
                     return wx.Bitmap(img)
-        # fallback icon
         return wx.ArtProvider.GetBitmap(wx.ART_INFORMATION, wx.ART_OTHER, (height_px, height_px))
 
     # UI helpers
@@ -652,6 +711,36 @@ class seWSNViewLayout(wx.Frame):
             s = str(val)
         return f"{s} {unit}".strip()
 
+    # ---- Active alarm helpers ----
+    def _read_active_alarm_ids(self) -> List[int]:
+        # 8x16 bits starting at 0x75A5 => alarms 1..128
+        regs = self.mb_read_holding(0x75A5, 8)
+        if regs is None:
+            return []
+        ids: List[int] = []
+        for w_idx, w in enumerate(regs):
+            for bit in range(16):
+                if w & (1 << bit):
+                    ids.append(w_idx * 16 + bit + 1)
+        return ids
+
+    def _update_alarm_box(self):
+        ids = self._read_active_alarm_ids()
+        if not hasattr(self.pageNetMon, "faults_text"):
+            return
+        if not ids:
+            self.pageNetMon.faults_text.SetValue("No active alarms.")
+            return
+        lines = []
+        for a in ids:
+            label = self.FAULT_DESC.get(a, f"Alarm {a}")
+            detail = self.mb_read_holding(0x9A4C + (a - 1), 1)
+            if detail is not None and len(detail) == 1 and detail[0] != 0:
+                label += f" (detail={detail[0]})"
+            lines.append(f"[{a:02d}] {label}")
+        self.pageNetMon.faults_text.SetValue("\n".join(lines))
+    # --------------------------------
+
     # Generic read + show
     def read_and_show(self, reg_name: str):
         reg = REG_BY_NAME.get(reg_name)
@@ -680,6 +769,7 @@ class seWSNViewLayout(wx.Frame):
                 time.sleep(0.02)
             except Exception as e:
                 self.UpdatePageTerminal(f"Error during {reg.name}: {e}\n")
+        self._update_alarm_box()
         self.UpdatePageTerminal("Done pulling all data.\n")
 
     # Start/Stop/Clear
@@ -699,6 +789,8 @@ class seWSNViewLayout(wx.Frame):
     def OnClearAll(self, _=None):
         for ctrl in self.pageNetMon.field_by_name.values():
             ctrl.SetValue("")
+        if hasattr(self.pageNetMon, "faults_text"):
+            self.pageNetMon.faults_text.SetValue("")
         self.UpdatePageTerminal("Cleared all fields.\n")
 
     # Excel export
