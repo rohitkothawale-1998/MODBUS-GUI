@@ -3,6 +3,7 @@
 #
 # pip install wxPython pymodbus pyserial openpyxl
 
+import os
 import wx
 import wxSerialConfigDialog
 import serial
@@ -248,13 +249,12 @@ class PageNetworkMonitor(wx.Panel):
         super().__init__(parent=parent, id=wx.ID_ANY)
         self.SetDoubleBuffered(True)
 
-        # unified fonts
         base_font: wx.Font = self.GetFont()
         label_font = wx.Font(pointSize=max(12, base_font.GetPointSize()),
                              family=base_font.GetFamily(),
                              style=wx.FONTSTYLE_NORMAL,
                              weight=wx.FONTWEIGHT_NORMAL)
-        value_font = wx.Font(pointSize=max(15, base_font.GetPointSize()),
+        value_font = wx.Font(pointSize=max(12, base_font.GetPointSize()),
                              family=base_font.GetFamily(),
                              style=wx.FONTSTYLE_NORMAL,
                              weight=wx.FONTWEIGHT_NORMAL)
@@ -269,7 +269,6 @@ class PageNetworkMonitor(wx.Panel):
             box = wx.StaticBox(self, wx.ID_ANY, title)
             col = wx.StaticBoxSizer(box, wx.VERTICAL)
 
-            # rows=#regs so we can mark all rows growable → extra height spreads across rows
             grid = wx.FlexGridSizer(rows=len(regs), cols=2, hgap=10, vgap=8)
             grid.AddGrowableCol(1, 1)
             for i in range(len(regs)):
@@ -278,11 +277,9 @@ class PageNetworkMonitor(wx.Panel):
             def add_row(r: Reg):
                 lbl = wx.StaticText(self, wx.ID_ANY, r.name)
                 lbl.SetFont(label_font)
-
                 txt = wx.TextCtrl(self, wx.ID_ANY, style=tc_style)
                 txt.SetFont(value_font)
-                txt.SetMinSize((240, 28))      # consistent height
-                # Let each cell expand both ways so the growable rows consume space
+                txt.SetMinSize((240, 28))
                 grid.Add(lbl, 0, wx.ALIGN_RIGHT | wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 2)
                 grid.Add(txt, 1, wx.EXPAND | wx.RIGHT, 2)
                 self.field_by_name[r.name] = txt
@@ -294,7 +291,6 @@ class PageNetworkMonitor(wx.Panel):
             col.Add(grid, 1, wx.EXPAND | wx.ALL, 8)
             return col
 
-        # Build columns
         root.Add(make_column("Device Data",  DEVICE_DATA), 1, wx.EXPAND | wx.ALL, 6)
         root.Add(make_column("Run-time Data", RUNTIME_DATA), 1, wx.EXPAND | wx.ALL, 6)
         root.Add(make_column("Summary Data", SUMMARY_DATA), 1, wx.EXPAND | wx.ALL, 6)
@@ -307,7 +303,7 @@ class seWSNViewLayout(wx.Frame):
 
     def __init__(self, *args, **kwds):
         super().__init__(*args, **kwds)
-        self.SetTitle("SE Wireless Development Tool (Modbus RTU)")
+        self.SetTitle("REON Modbus GUI")
         self.SetSize((1300, 900))
 
         self.serial = serial.Serial()
@@ -319,22 +315,41 @@ class seWSNViewLayout(wx.Frame):
         self.modbus_slave_id = 1
 
         self.poll_timer = wx.Timer(self)
-        self.poll_period_ms = self.POLL_SECONDS_DEFAULT * 1000
+        self.poll_period_ms = self.POLL_SECONDS_DEFAULT * 500
         self.Bind(wx.EVT_TIMER, self._on_poll_timer, self.poll_timer)
 
         seWSNMenubar(self)
 
+        # ── Top-level panel holding a header (logo) + the notebook
         p = wx.Panel(self)
+
+        # Header bar with right-aligned logo
+        self.header = wx.Panel(p)
+        header_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        header_sizer.AddStretchSpacer(1)
+
+        bmp = self._load_logo_bitmap(height_px=28)
+        self.logo_ctrl = wx.StaticBitmap(self.header, bitmap=bmp)
+        header_sizer.Add(self.logo_ctrl, 0, wx.ALL | wx.ALIGN_CENTER, 6)
+        header_sizer.AddStretchSpacer(1)
+        self.header.SetSizer(header_sizer)
+        self.header.SetMinSize((-1, bmp.GetHeight() + 10))  # a bit of padding
+
+        # Main notebook
         self.nb = wx.Notebook(p)
         self.pageNetMon = PageNetworkMonitor(self.nb)
         self.pageTerminal = PageTerminalView(self.nb)
         self.nb.AddPage(self.pageNetMon, "Network Monitor")
         self.nb.AddPage(self.pageTerminal, "Terminal View")
+        self._set_notebook_tab_font(point_size_increase=6)
 
-        nbsizer = wx.BoxSizer()
-        nbsizer.Add(self.nb, 1, wx.EXPAND)
-        p.SetSizer(nbsizer)
+        # Layout: header on top, notebook fills the rest
+        root_v = wx.BoxSizer(wx.VERTICAL)
+        root_v.Add(self.header, 0, wx.EXPAND)
+        root_v.Add(self.nb, 1, wx.EXPAND)
+        p.SetSizer(root_v)
 
+        # Bind Send menu items to generic readers by name
         b = self.Bind
         b(wx.EVT_MENU, lambda e: self.read_and_show("Serial #"),               id=ID_READ_SERIAL_NUMBER)
         b(wx.EVT_MENU, lambda e: self.read_and_show("Inverter SN"),            id=ID_READ_INVERTER_SN)
@@ -363,6 +378,32 @@ class seWSNViewLayout(wx.Frame):
 
         self.Bind(wx.EVT_CLOSE, self.OnClose)
         wx.CallAfter(self.autodetect_usb_and_connect)
+
+
+    def _set_notebook_tab_font(self, point_size_increase=3):
+        """Increase the font size of the notebook tabs."""
+        f = self.nb.GetFont()
+        f.SetPointSize(f.GetPointSize() + int(point_size_increase))
+        self.nb.SetFont(f)
+    # Make sure the new tab height is respected
+        self.nb.Layout()
+        self.nb.Refresh()
+        self.GetChildren()[0].Layout()  # layout the top panel too
+
+    # Load and scale a logo; fall back to a stock bitmap if not found
+    def _load_logo_bitmap(self, height_px: int = 28) -> wx.Bitmap:
+        here = os.path.dirname(os.path.abspath(__file__))
+        for name in ("company_logo.png", "logo.png", "logo.jpg", "logo.bmp"):
+            path = os.path.join(here, name)
+            if os.path.exists(path):
+                img = wx.Image(path)
+                if img.IsOk():
+                    # keep aspect ratio, scale by height
+                    w = max(1, int(img.GetWidth() * (height_px / float(img.GetHeight()))))
+                    img = img.Scale(w, height_px, wx.IMAGE_QUALITY_HIGH)
+                    return wx.Bitmap(img)
+        # fallback icon
+        return wx.ArtProvider.GetBitmap(wx.ART_INFORMATION, wx.ART_OTHER, (height_px, height_px))
 
     # UI helpers
     def UpdatePageTerminal(self, s):
@@ -472,7 +513,7 @@ class seWSNViewLayout(wx.Frame):
     def _update_title_connected(self):
         port_label = getattr(self.serial, "portstr", None) or getattr(self.serial, "port", "")
         self.SetTitle(
-            f"SE Wireless Development Tool (Modbus RTU) on {port_label} "
+            f"REON Modbus GUI tool on {port_label} "
             f"[{self.serial.baudrate},{self.serial.bytesize}{self._parity_char(self.serial.parity)}{self.serial.stopbits}]"
         )
 
