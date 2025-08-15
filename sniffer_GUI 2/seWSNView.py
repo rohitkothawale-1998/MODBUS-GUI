@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# SE Wireless Development Tool (Modbus RTU) — table-driven GUI
-#
+# REON Modbus GUI (Modbus RTU)
 # pip install wxPython pymodbus pyserial openpyxl
 
 import os
@@ -312,11 +311,192 @@ class PageNetworkMonitor(wx.Panel):
 
         self.SetSizer(root)
 
+# ──────────────────────────────────────────────────────────────────────────────
+# NEW: Clean Machine Status page with controls
+class PageMachinestatus(wx.Panel):
+    """
+    Clean control panel with rows:
+      - ECO Mode ON/OFF
+      - Generator Mode ON/OFF (LineRangeSet: OFF->UPS=0, ON->Generator=2)
+      - Buzzer Mute ON/OFF
+      - Battery SOC Low Shutdown (A09B) [read/enter/write]
+      - Battery Full SOC Judgment (A09D) [read/enter/write]
+    """
+    def __init__(self, parent):
+        super().__init__(parent=parent, id=wx.ID_ANY)
+        self.SetDoubleBuffered(True)
+
+        self.status_boxes: Dict[str, wx.TextCtrl] = {}
+        self.spin_boxes: Dict[str, wx.SpinCtrl] = {}
+
+        root = wx.BoxSizer(wx.VERTICAL)
+
+        # ── Group 1: Operating modes
+        modes_box = wx.StaticBox(self, wx.ID_ANY, "Operating Modes")
+        modes = wx.StaticBoxSizer(modes_box, wx.VERTICAL)
+
+        def add_toggle_row(label: str, key: str,
+                           read_fn, set_on_fn, set_off_fn,
+                           explain: Optional[str] = None):
+            row = wx.BoxSizer(wx.HORIZONTAL)
+            row.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+
+            status = wx.TextCtrl(self, style=wx.TE_READONLY)
+            status.SetMinSize((240, 28))
+            self.status_boxes[key] = status
+            row.Add(status, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+
+            btn_read = wx.Button(self, label="Read")
+            btn_on   = wx.Button(self, label="Set ON")
+            btn_off  = wx.Button(self, label="Set OFF")
+            row.Add(btn_read, 0, wx.ALL, 2)
+            row.Add(btn_on,   0, wx.ALL, 2)
+            row.Add(btn_off,  0, wx.ALL, 2)
+
+            if explain:
+                row.Add(wx.StaticText(self, label=f"  {explain}"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 2)
+
+            btn_read.Bind(wx.EVT_BUTTON, lambda _e: read_fn(key))
+            btn_on.Bind(wx.EVT_BUTTON,   lambda _e: set_on_fn(key))
+            btn_off.Bind(wx.EVT_BUTTON,  lambda _e: set_off_fn(key))
+
+            modes.Add(row, 0, wx.ALL, 2)
+
+        add_toggle_row(
+            "ECO Mode:", "eco",
+            self._read_eco, self._set_eco_on, self._set_eco_off,
+            # "A02D EcoEn 0:OFF / 1:ON"
+        )
+        add_toggle_row(
+            "Generator Mode:", "gen",
+            self._read_gen, self._set_gen_on, self._set_gen_off,
+            # "A02B LineRangeSet 0:UPS 1:APL 2:GEN"
+        )
+        add_toggle_row(
+            "Buzzer Mute:", "mute",
+            self._read_mute, self._set_mute_on, self._set_mute_off,
+            # "A033 MuteEn 0:OFF / 1:ON"
+        )
+
+        root.Add(modes, 0, wx.EXPAND | wx.ALL, 6)
+
+        # ── Group 2: SOC settings
+        soc_box = wx.StaticBox(self, wx.ID_ANY, "Battery SOC Settings")
+        soc = wx.StaticBoxSizer(soc_box, wx.VERTICAL)
+
+        def add_soc_row(label: str, key: str, read_fn, write_fn):
+            row = wx.BoxSizer(wx.HORIZONTAL)
+            row.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+
+            status = wx.TextCtrl(self, style=wx.TE_READONLY)
+            status.SetMinSize((120, 28))
+            self.status_boxes[key] = status
+            row.Add(status, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+
+            sp = wx.SpinCtrl(self, min=0, max=100, initial=0)
+            sp.SetMinSize((90, 28))
+            self.spin_boxes[key] = sp
+            row.Add(wx.StaticText(self, label=" Set: "), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 2)
+            row.Add(sp, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+
+            btn_read  = wx.Button(self, label="Read")
+            btn_write = wx.Button(self, label="Write")
+            row.Add(btn_read, 0, wx.ALL, 2)
+            row.Add(btn_write, 0, wx.ALL, 2)
+
+            btn_read.Bind(wx.EVT_BUTTON, lambda _e: read_fn(key))
+            btn_write.Bind(wx.EVT_BUTTON, lambda _e: write_fn(key))
+
+            soc.Add(row, 0, wx.ALL, 2)
+
+        add_soc_row("Low shutdown SOC:", "soc_stop", self._read_soc_stop, self._write_soc_stop)
+        add_soc_row("Full SOC judgment:", "soc_full", self._read_soc_full, self._write_soc_full)
+
+        root.Add(soc, 0, wx.EXPAND | wx.ALL, 6)
+
+        self.SetSizer(root)
+
+        # Auto-refresh once when tab is created
+        wx.CallAfter(self._read_eco, "eco")
+        wx.CallAfter(self._read_gen, "gen")
+        wx.CallAfter(self._read_mute, "mute")
+        wx.CallAfter(self._read_soc_stop, "soc_stop")
+        wx.CallAfter(self._read_soc_full, "soc_full")
+
+    # helpers to reach the frame
+    def _frm(self): return self.GetTopLevelParent()
+
+    # --------------- ECO ----------------
+    def _read_eco(self, key):
+        v = self._frm().mb_read_u16(0xA02D)
+        self._set_status_text(key, "ON" if v == 1 else "OFF" if v is not None else "—")
+
+    def _set_eco_on(self, key):
+        if self._frm().mb_write_single(0xA02D, 1): self._read_eco(key)
+
+    def _set_eco_off(self, key):
+        if self._frm().mb_write_single(0xA02D, 0): self._read_eco(key)
+
+    # ------------- Generator -------------
+    def _read_gen(self, key):
+        v = self._frm().mb_read_u16(0xA02B)
+        txt = {0: "UPS (OFF)", 1: "APL", 2: "GEN (ON)"}.get(v, str(v)) if v is not None else "—"
+        self._set_status_text(key, txt)
+
+    def _set_gen_on(self, key):
+        if self._frm().mb_write_single(0xA02B, 2): self._read_gen(key)  # 2=Generator
+
+    def _set_gen_off(self, key):
+        if self._frm().mb_write_single(0xA02B, 0): self._read_gen(key)  # 0=UPS (treat as OFF)
+
+    # --------------- Mute ----------------
+    def _read_mute(self, key):
+        v = self._frm().mb_read_u16(0xA033)
+        self._set_status_text(key, "ON" if v == 1 else "OFF" if v is not None else "—")
+
+    def _set_mute_on(self, key):
+        if self._frm().mb_write_single(0xA033, 1): self._read_mute(key)
+
+    def _set_mute_off(self, key):
+        if self._frm().mb_write_single(0xA033, 0): self._read_mute(key)
+
+    # --------------- SOC -----------------
+    def _read_soc_stop(self, key):
+        v = self._frm().mb_read_u16(0xA09B)
+        if v is not None:
+            self._set_status_text(key, f"{v} %")
+            self.spin_boxes[key].SetValue(int(v))
+
+    def _write_soc_stop(self, key):
+        val = int(self.spin_boxes[key].GetValue())
+        if self._frm().mb_write_single(0xA09B, val): self._read_soc_stop(key)
+
+    def _read_soc_full(self, key):
+        v = self._frm().mb_read_u16(0xA09D)
+        if v is not None:
+            self._set_status_text(key, f"{v} %")
+            self.spin_boxes[key].SetValue(int(v))
+
+    def _write_soc_full(self, key):
+        val = int(self.spin_boxes[key].GetValue())
+        if self._frm().mb_write_single(0xA09D, val): self._read_soc_full(key)
+
+    # Common UI helper
+    def _set_status_text(self, key: str, text: str):
+        box = self.status_boxes.get(key)
+        if box:
+            box.SetValue(text)
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Main window
 class seWSNViewLayout(wx.Frame):
     POLL_SECONDS_DEFAULT = 10
 
-    # Alarm descriptions
+    # Popup behavior controls
+    _NOT_CONNECTED_GRACE_S = 6.0   # don't show popup during the first N seconds
+    _NOT_CONNECTED_COOLDOWN_S = 3.0  # show at most once every N seconds
+
+    # Alarm descriptions (partial)
     FAULT_DESC: Dict[int, str] = {
         1: "Battery under voltage warning",
         2: "Battery under voltage protection ",
@@ -353,7 +533,7 @@ class seWSNViewLayout(wx.Frame):
         40: "The parallel mode synchronization fails",
         41: "Inconsistent system firmware version in parallel mode",
         42: "The parallel communication cable is faulty",
-        43: "Serial number error",       
+        43: "Serial number error",
         49: "BMS communication error",
         50: "BMS other alarm",
         51: "BMS battery over temperature",
@@ -363,7 +543,6 @@ class seWSNViewLayout(wx.Frame):
         55: "BMS battery low temperature",
         56: "PD communication error",
         58: "BMS pack number mismatch",
-        # extend with more IDs as you map them
     }
 
     def __init__(self, *args, **kwds):
@@ -382,6 +561,10 @@ class seWSNViewLayout(wx.Frame):
         self.poll_timer = wx.Timer(self)
         self.poll_period_ms = self.POLL_SECONDS_DEFAULT * 500
         self.Bind(wx.EVT_TIMER, self._on_poll_timer, self.poll_timer)
+
+        # popup timing state
+        self._app_started_at = time.time()
+        self._last_not_connected_popup = 0.0
 
         seWSNMenubar(self)
 
@@ -402,8 +585,10 @@ class seWSNViewLayout(wx.Frame):
         # Main notebook
         self.nb = wx.Notebook(p)
         self.pageNetMon = PageNetworkMonitor(self.nb)
+        self.pageMachineStatus = PageMachinestatus(self.nb)  # clean control page
         self.pageTerminal = PageTerminalView(self.nb)
-        self.nb.AddPage(self.pageNetMon, "Network Monitor")
+        self.nb.AddPage(self.pageNetMon, "Machine Monitor")
+        self.nb.AddPage(self.pageMachineStatus, "Machine Configuration")
         self.nb.AddPage(self.pageTerminal, "Terminal View")
         self._set_notebook_tab_font(point_size_increase=6)
 
@@ -628,7 +813,18 @@ class seWSNViewLayout(wx.Frame):
         else:
             self.UpdatePageTerminal("Auto-detect: failed to connect. Use Config → Port Settings…\n")
 
-    # Modbus read wrapper
+    # ── Not-connected popup helpers ───────────────────────────────────────────
+    def _maybe_warn_not_connected(self):
+        now = time.time()
+        # Respect startup grace period and cooldown
+        if (now - self._app_started_at) < self._NOT_CONNECTED_GRACE_S:
+            return
+        if (now - self._last_not_connected_popup) < self._NOT_CONNECTED_COOLDOWN_S:
+            return
+        self._last_not_connected_popup = now
+        wx.MessageBox("Modbus client is not connected.", "Error", wx.OK | wx.ICON_ERROR)
+
+    # ── Modbus read/write wrappers ────────────────────────────────────────────
     def _call_read(self, method_name, address, count, unit):
         if not self.mb:
             return None
@@ -658,7 +854,7 @@ class seWSNViewLayout(wx.Frame):
 
     def mb_read_holding(self, address, count=1, unit=None):
         if not self.mb:
-            wx.MessageBox("Modbus client is not connected.", "Error", wx.OK | wx.ICON_ERROR)
+            self._maybe_warn_not_connected()
             return None
         with self.mb_lock:
             rr = self._read_holding(address, count, unit)
@@ -672,6 +868,43 @@ class seWSNViewLayout(wx.Frame):
         if getattr(rr, "registers", None) is None:
             self.UpdatePageTerminal(f"No data returned at 0x{address:04X}: {rr}\n"); return None
         return rr.registers
+
+    def mb_read_u16(self, address, unit=None) -> Optional[int]:
+        regs = self.mb_read_holding(address, 1, unit)
+        if regs is None:
+            return None
+        return int(regs[0] & 0xFFFF)
+
+    # write single (FC=06)
+    def mb_write_single(self, address, value, unit=None) -> bool:
+        if not self.mb:
+            self._maybe_warn_not_connected()
+            return False
+        unit = unit or self.modbus_slave_id
+        try:
+            fn = getattr(self.mb, "write_register", None)
+            if not fn:
+                self.UpdatePageTerminal("write_register not available on Modbus client.\n")
+                return False
+            try:
+                rr = fn(address=address, value=int(value) & 0xFFFF, slave=unit)
+            except TypeError:
+                try:
+                    rr = fn(address=address, value=int(value) & 0xFFFF, unit=unit)
+                except TypeError:
+                    rr = fn(address=address, value=int(value) & 0xFFFF)
+        except Exception as e:
+            self.UpdatePageTerminal(f"Write error at 0x{address:04X}: {e}\n")
+            return False
+
+        try:
+            if rr is None or rr.isError():
+                self.UpdatePageTerminal(f"Modbus write error at 0x{address:04X}: {rr}\n")
+                return False
+        except Exception:
+            pass
+        self.UpdatePageTerminal(f"Wrote 0x{int(value) & 0xFFFF:04X} to 0x{address:04X}\n")
+        return True
 
     # Decoders / formatters
     def _u16(self, w):  return int(w & 0xFFFF)
@@ -739,7 +972,6 @@ class seWSNViewLayout(wx.Frame):
                 label += f" (detail={detail[0]})"
             lines.append(f"[{a:02d}] {label}")
         self.pageNetMon.faults_text.SetValue("\n".join(lines))
-    # --------------------------------
 
     # Generic read + show
     def read_and_show(self, reg_name: str):
@@ -760,7 +992,7 @@ class seWSNViewLayout(wx.Frame):
     # Batch: Pull all data once
     def OnPullAll(self, _):
         if not self.mb:
-            wx.MessageBox("Modbus client is not connected.", "Error", wx.OK | wx.ICON_ERROR)
+            self._maybe_warn_not_connected()
             return
         self.UpdatePageTerminal("Pulling all data...\n")
         for reg in DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA:
