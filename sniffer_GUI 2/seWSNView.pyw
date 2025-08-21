@@ -11,6 +11,10 @@ import time
 from dataclasses import dataclass
 from typing import List, Dict, Optional
 from serial.tools import list_ports
+import csv
+import random
+from datetime import datetime
+
 
 import pymodbus
 from pymodbus.client import ModbusSerialClient
@@ -37,7 +41,7 @@ class Reg:
 
 DEVICE_DATA: List[Reg] = [
     Reg("Serial #",         0xC780, 15, "ascii", 1,     ""),
-    Reg("Inverter SN",      0xC78F, 10, "ascii", 1,     ""),
+    # Reg("Inverter SN",      0xC78F, 10, "ascii", 1,     ""),
     Reg("Production Date",  0xC7A0,  4, "ascii", 1,     ""),
     Reg("Firmware Version", 0xC783,  1, "u16",   1,     ""),
     Reg("HW Version",       0xC784,  1, "u16",   1,     ""),
@@ -186,7 +190,7 @@ class seWSNMenubar(wx.Frame):
 
         send_menu = wx.Menu()
         send_menu.Append(ID_READ_SERIAL_NUMBER,       "Get Serial Numbers")
-        send_menu.Append(ID_READ_INVERTER_SN,         "Get INVERTER SN")
+        # send_menu.Append(ID_READ_INVERTER_SN,         "Get INVERTER SN")
         send_menu.Append(ID_READ_PRODUCTION_DATE,     "Get Production Date")
         send_menu.Append(ID_READ_FW,                  "Get Firmware Version")
         send_menu.Append(ID_READ_HW,                  "Get Hardware Version")
@@ -440,7 +444,7 @@ class PageMachinestatus(wx.Panel):
     # ------------- Generator -------------
     def _read_gen(self, key):
         v = self._frm().mb_read_u16(0xA02B)
-        txt = {0: "UPS (OFF)", 1: "APL", 2: "GEN (ON)"}.get(v, str(v)) if v is not None else "—"
+        txt = {0: "GEN (OFF)", 1: "APL", 2: "GEN (ON)"}.get(v, str(v)) if v is not None else "—"
         self._set_status_text(key, txt)
 
     def _set_gen_on(self, key):
@@ -486,6 +490,511 @@ class PageMachinestatus(wx.Panel):
         box = self.status_boxes.get(key)
         if box:
             box.SetValue(text)
+
+class PageStressTest(wx.Panel):
+    """Auto/Stress test runner for Modbus stability & FW testing."""
+    def __init__(self, parent):
+        super().__init__(parent=parent, id=wx.ID_ANY)
+        self.SetDoubleBuffered(True)
+
+        # worker control
+        self._worker = None
+        self._stop_evt = threading.Event()
+        self._log_rows = []   # list of dicts for CSV export
+        self._stats = dict(n=0, ok=0, err=0, t_sum=0.0, t_max=0.0)
+
+        # ----- UI -----
+        root = wx.BoxSizer(wx.VERTICAL)
+
+        # Row 1: operation, register selector
+        row1 = wx.BoxSizer(wx.HORIZONTAL)
+
+        row1.Add(wx.StaticText(self, label="Operation:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+        self.choice_op = wx.Choice(self, choices=["Read Holding (0x03)", "Write Single (0x06)"])
+        self.choice_op.SetSelection(0)
+        self.choice_op.Bind(wx.EVT_CHOICE, self._on_op_change)
+        row1.Add(self.choice_op, 0, wx.ALL, 4)
+
+        row1.AddSpacer(12)
+        row1.Add(wx.StaticText(self, label="Register:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+        self.choice_reg = wx.Choice(self, choices=self._build_reg_choices())
+        self.choice_reg.SetSelection(0)
+        self.choice_reg.Bind(wx.EVT_CHOICE, self._on_reg_change)
+        row1.Add(self.choice_reg, 0, wx.ALL, 4)
+
+        self.txt_custom = wx.TextCtrl(self, value="0xA02D")
+        self.txt_custom.Enable(False)
+        row1.Add(self.txt_custom, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+
+        root.Add(row1, 0, wx.ALL, 4)
+
+        # Row 2: write value pattern
+        row2 = wx.BoxSizer(wx.HORIZONTAL)
+
+        self.lbl_pattern = wx.StaticText(self, label="Write pattern:")
+        row2.Add(self.lbl_pattern, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+        self.choice_pattern = wx.Choice(self, choices=["Constant", "Toggle 0/1", "Increment", "Random 0..65535"])
+        self.choice_pattern.SetSelection(0)
+        self.choice_pattern.Bind(wx.EVT_CHOICE, self._on_pattern_change)
+        row2.Add(self.choice_pattern, 0, wx.ALL, 4)
+
+        row2.Add(wx.StaticText(self, label="Value:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+        self.spin_value = wx.SpinCtrl(self, min=0, max=65535, initial=1)
+        row2.Add(self.spin_value, 0, wx.ALL, 4)
+
+        row2.AddSpacer(12)
+        row2.Add(wx.StaticText(self, label="Period (ms):"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+        self.spin_period = wx.SpinCtrl(self, min=10, max=100000, initial=100)
+        row2.Add(self.spin_period, 0, wx.ALL, 4)
+
+        row2.Add(wx.StaticText(self, label="Iterations (0 = ∞):"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+        self.spin_iters = wx.SpinCtrl(self, min=0, max=1_000_000, initial=0)
+        row2.Add(self.spin_iters, 0, wx.ALL, 4)
+
+        row2.AddSpacer(12)
+        self.chk_continue = wx.CheckBox(self, label="Continue on error")
+        self.chk_continue.SetValue(True)
+        row2.Add(self.chk_continue, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+
+        root.Add(row2, 0, wx.ALL, 4)
+
+        # Row 3: Start/Stop + stats + Full Stress Test at far right
+        row3 = wx.BoxSizer(wx.HORIZONTAL)
+
+        self.btn_start = wx.Button(self, label="Start")
+        self.btn_stop  = wx.Button(self, label="Stop")
+        self.btn_clear = wx.Button(self, label="Clear Log")
+        self.btn_export= wx.Button(self, label="Export CSV")
+
+        self.btn_start.Bind(wx.EVT_BUTTON, self._on_start)
+        self.btn_stop.Bind(wx.EVT_BUTTON,  self._on_stop)
+        self.btn_clear.Bind(wx.EVT_BUTTON, self._on_clear)
+        self.btn_export.Bind(wx.EVT_BUTTON, self._on_export)
+
+        row3.Add(self.btn_start, 0, wx.ALL, 4)
+        row3.Add(self.btn_stop,  0, wx.ALL, 4)
+        row3.Add(self.btn_clear, 0, wx.ALL, 4)
+        row3.Add(self.btn_export,0, wx.ALL, 4)
+
+        row3.AddSpacer(16)
+        self.lbl_stats = wx.StaticText(self, label="Attempts: 0 | OK: 0 | Err: 0 | Avg: 0.0 ms | Max: 0.0 ms")
+        row3.Add(self.lbl_stats, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 6)
+
+        # push next control to the far right
+        row3.AddStretchSpacer(1)
+
+        # Full Stress Test (blue bg, black text) at far right
+        self.btn_full = wx.Button(self, label="Full Stress Test")
+        self.btn_full.SetMinSize((120, 24))
+        self.btn_full.SetBackgroundColour(wx.Colour(0, 122, 255))
+        self.btn_full.SetForegroundColour(wx.Colour(0, 0, 0))
+        self.btn_full.Bind(wx.EVT_BUTTON, self._on_full_test)
+        row3.Add(self.btn_full, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.TOP | wx.BOTTOM, 4)
+
+        root.Add(row3, 0, wx.EXPAND | wx.ALL, 4)
+
+
+        # Log box
+        self.txt_log = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2)
+        self.txt_log.SetMinSize((-1, 260))
+        root.Add(self.txt_log, 1, wx.EXPAND | wx.ALL, 6)
+
+        self.SetSizer(root)
+        self._on_op_change(None)  # set initial enable/disable
+
+    # --------- helpers ----------
+    def _frm(self): return self.GetTopLevelParent()
+    def _on_full_test(self, _):
+        # don't start if a test is already running
+        if self._worker and self._worker.is_alive():
+            wx.MessageBox("A stress test is already running. Stop it first.", "Info",
+                          wx.OK | wx.ICON_INFORMATION)
+            return
+        self._stop_evt.clear()
+        self._reset_stats()
+        self._worker = threading.Thread(target=self._run_full_sweep, daemon=True)
+        self._worker.start()
+
+    def _sleep_for(self, seconds: float):
+        """Sleep up to 'seconds', but wake quickly if user presses Stop."""
+        end = time.perf_counter() + max(0.0, seconds)
+        while not self._stop_evt.is_set():
+            left = end - time.perf_counter()
+            if left <= 0:
+                break
+            time.sleep(min(0.02, left))
+
+    def _run_full_sweep(self):
+        """
+        Full Stress Test:
+          • READ: for every known register (DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA),
+            perform 10 reads spaced at 10 ms; log each attempt and a per-register summary.
+          • WRITE toggles: ECO (A02D 0↔1), GEN (A02B 0↔2), MUTE (A033 0↔1),
+            wait 2s between toggles and verify by reading back.
+          • EXCLUDES Low shutdown SOC (A09B) and Full SOC judgment (A09D).
+        """
+        # ---------- READ SWEEP ----------
+        regs = DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA
+        wx.CallAfter(self._append_log, "=== FULL READ STRESS: each register 10 reads @10ms ===\n")
+
+        for r in regs:
+            if self._stop_evt.is_set(): break
+            addr = r.addr
+            tries = 10
+            ok_cnt = 0
+            t_sum = 0.0
+            t_max = 0.0
+
+            next_t = time.perf_counter()
+            for i in range(tries):
+                if self._stop_evt.is_set(): break
+
+                t0 = time.perf_counter()
+                rr = self._frm().mb_read_holding(addr, r.words)
+                dt = (time.perf_counter() - t0) * 1000.0
+                ok = rr is not None
+
+                # global stats
+                self._stats["n"] += 1
+                if ok:
+                    self._stats["ok"] += 1
+                    self._stats["t_sum"] += dt
+                    if dt > self._stats["t_max"]:
+                        self._stats["t_max"] = dt
+                    ok_cnt += 1
+                    t_sum += dt
+                    if dt > t_max: t_max = dt
+                else:
+                    self._stats["err"] += 1
+
+                ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                # per-try log row
+                self._log_rows.append({
+                    "time": ts, "op": "READ", "address_hex": f"0x{addr:04X}",
+                    "value_written": "", "value_read": "",
+                    "ok": int(bool(ok)), "ms": round(dt, 3), "error": ""
+                })
+                wx.CallAfter(self._append_log,
+                             f"{ts} | R 0x{addr:04X} ({r.name}) | {dt:.1f} ms {'OK' if ok else 'ERR'}\n")
+                wx.CallAfter(self._update_stats_label)
+
+                # pace at 10 ms
+                next_t += 0.010
+                slack = next_t - time.perf_counter()
+                if slack > 0:
+                    self._sleep_for(slack)
+                else:
+                    next_t = time.perf_counter()
+
+            # per-register summary
+            avg = (t_sum / ok_cnt) if ok_cnt else 0.0
+            ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            summary_line = (f"{ts} | SUMMARY 0x{addr:04X} ({r.name}): "
+                            f"OK {ok_cnt}/{tries} | Avg {avg:.1f} ms | Max {t_max:.1f} ms\n")
+            wx.CallAfter(self._append_log, summary_line)
+            self._log_rows.append({
+                "time": ts, "op": "SUMMARY", "address_hex": f"0x{addr:04X}",
+                "value_written": "", "value_read": "",
+                "ok": ok_cnt, "ms": round(avg, 3), "error": f"max={t_max:.1f}ms"
+            })
+
+        # ---------- WRITE TOGGLE TESTS ----------
+        if not self._stop_evt.is_set():
+            wx.CallAfter(self._append_log, "=== TOGGLE WRITE TESTS (2s interval; excludes A09B/A09D) ===\n")
+            toggles = [
+                ("ECO Mode",       0xA02D, [1, 0]),
+                ("Generator Mode", 0xA02B, [2, 0]),
+                ("Buzzer Mute",    0xA033, [1, 0]),
+            ]
+            for name, addr, seq in toggles:
+                if self._stop_evt.is_set(): break
+                for val in seq:
+                    if self._stop_evt.is_set(): break
+
+                    # write
+                    t0 = time.perf_counter()
+                    okw = self._frm().mb_write_single(addr, val)
+                    dtw = (time.perf_counter() - t0) * 1000.0
+                    self._stats["n"] += 1
+                    if okw:
+                        self._stats["ok"] += 1
+                        self._stats["t_sum"] += dtw
+                        if dtw > self._stats["t_max"]:
+                            self._stats["t_max"] = dtw
+                    else:
+                        self._stats["err"] += 1
+
+                    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                    self._log_rows.append({
+                        "time": ts, "op": "WRITE", "address_hex": f"0x{addr:04X}",
+                        "value_written": val, "value_read": "",
+                        "ok": int(bool(okw)), "ms": round(dtw, 3), "error": ""
+                    })
+                    wx.CallAfter(self._append_log,
+                                 f"{ts} | W 0x{addr:04X} ({name}) = {val} | {dtw:.1f} ms {'OK' if okw else 'ERR'}\n")
+                    wx.CallAfter(self._update_stats_label)
+
+                    # wait ~2s before verify
+                    self._sleep_for(2.0)
+                    if self._stop_evt.is_set(): break
+
+                    # verify by reading back
+                    t1 = time.perf_counter()
+                    rv = self._frm().mb_read_u16(addr)
+                    dtr = (time.perf_counter() - t1) * 1000.0
+                    good = (rv == val)
+                    ts2 = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                    self._log_rows.append({
+                        "time": ts2, "op": "READ", "address_hex": f"0x{addr:04X}",
+                        "value_written": "", "value_read": (rv if rv is not None else ""),
+                        "ok": int(bool(good)), "ms": round(dtr, 3),
+                        "error": "" if good else f"Expected {val}, got {rv}"
+                    })
+                    wx.CallAfter(self._append_log,
+                                 f"{ts2} | VERIFY 0x{addr:04X} ({name}) -> {rv} | "
+                                 f"{dtr:.1f} ms {'PASS' if good else 'FAIL'} (expected {val})\n")
+
+        wx.CallAfter(self._append_log, "Full stress test finished.\n")
+
+    def _build_reg_choices(self):
+        # Known regs + common control regs + Custom
+        items = []
+        for r in DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA:
+            items.append(f"{r.name}  (0x{r.addr:04X})")
+        # extra controls used in your config page
+        extra = [
+            ("ECO Mode", 0xA02D),
+            ("Generator Mode", 0xA02B),
+            ("Buzzer Mute", 0xA033),
+            ("Low shutdown SOC", 0xA09B),
+            ("Full SOC judgment", 0xA09D),
+        ]
+        for name, addr in extra:
+            items.append(f"{name}  (0x{addr:04X})")
+        items.append("Custom…")
+        return items
+
+    def _resolve_address(self) -> Optional[int]:
+        sel = self.choice_reg.GetStringSelection()
+        if sel.endswith("Custom…"):
+            s = self.txt_custom.GetValue().strip().lower()
+            try:
+                if s.startswith("0x"):
+                    return int(s, 16)
+                return int(s, 10)
+            except Exception:
+                wx.MessageBox("Invalid custom address. Use hex like 0xA02D or decimal.", "Input Error",
+                              wx.OK | wx.ICON_ERROR)
+                return None
+        # parse trailing (0xXXXX)
+        try:
+            paren = sel.rsplit("(", 1)[1]
+            hexs = paren.strip(")")
+            return int(hexs, 16)
+        except Exception:
+            return None
+
+    def _on_op_change(self, _):
+        writing = self.choice_op.GetSelection() == 1
+        self.lbl_pattern.Enable(writing)
+        self.choice_pattern.Enable(writing)
+        self.spin_value.Enable(writing)
+
+    def _on_reg_change(self, _):
+        self.txt_custom.Enable(self.choice_reg.GetStringSelection().endswith("Custom…"))
+
+    def _on_pattern_change(self, _):
+        # only "Constant" needs the value spin enabled; others ignore manual value
+        enable = self.choice_pattern.GetStringSelection() == "Constant"
+        if self.choice_op.GetSelection() == 1:
+            self.spin_value.Enable(enable)
+
+    def _append_log(self, line: str):
+        try:
+            self.txt_log.AppendText(line)
+        except Exception:
+            pass
+
+    def _update_stats_label(self):
+        n = self._stats["n"]
+        ok = self._stats["ok"]
+        er = self._stats["err"]
+        avg = (self._stats["t_sum"]/ok) if ok else 0.0
+        mx  = self._stats["t_max"]
+        self.lbl_stats.SetLabel(f"Attempts: {n} | OK: {ok} | Err: {er} | Avg: {avg:.1f} ms | Max: {mx:.1f} ms")
+
+    def _reset_stats(self):
+        self._stats.update(n=0, ok=0, err=0, t_sum=0.0, t_max=0.0)
+        self._update_stats_label()
+
+    # --------- worker control ----------
+    def _on_start(self, _):
+        if self._worker and self._worker.is_alive():
+            wx.MessageBox("Stress test already running.", "Info", wx.OK | wx.ICON_INFORMATION)
+            return
+
+        addr = self._resolve_address()
+        if addr is None:
+            return
+
+        op_write = (self.choice_op.GetSelection() == 1)
+        pattern  = self.choice_pattern.GetStringSelection()
+        const_val= int(self.spin_value.GetValue())
+        period_ms= int(self.spin_period.GetValue())
+        iters    = int(self.spin_iters.GetValue())
+        cont_err = bool(self.chk_continue.GetValue())
+
+        self._stop_evt.clear()
+        self._reset_stats()
+        start_cfg = dict(
+            addr=addr, op_write=op_write, pattern=pattern, const_val=const_val,
+            period_ms=period_ms, iters=iters, cont_err=cont_err
+        )
+        self._worker = threading.Thread(target=self._run_worker, args=(start_cfg,), daemon=True)
+        self._worker.start()
+
+    def _on_stop(self, _):
+        self.stop_worker()
+
+    def stop_worker(self):
+        try:
+            self._stop_evt.set()
+            if self._worker and self._worker.is_alive():
+                self._worker.join(timeout=1.0)
+        except Exception:
+            pass
+
+    def _on_clear(self, _):
+        self._log_rows.clear()
+        self.txt_log.SetValue("")
+        self._reset_stats()
+
+    def _on_export(self, _):
+        if not self._log_rows:
+            wx.MessageBox("No log entries to export.", "Info", wx.OK | wx.ICON_INFORMATION)
+            return
+        dlg = wx.FileDialog(self, "Save CSV", wildcard="CSV files (*.csv)|*.csv",
+                            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT)
+        if dlg.ShowModal() != wx.ID_OK:
+            dlg.Destroy()
+            return
+        path = dlg.GetPath()
+        dlg.Destroy()
+        try:
+            with open(path, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=list(self._log_rows[0].keys()))
+                w.writeheader()
+                w.writerows(self._log_rows)
+            self._append_log(f"Exported CSV to {path}\n")
+        except Exception as e:
+            wx.MessageBox(f"Failed to write CSV: {e}", "Error", wx.OK | wx.ICON_ERROR)
+
+    # --------- worker loop ----------
+    def _run_worker(self, cfg):
+        addr       = cfg["addr"]
+        op_write   = cfg["op_write"]
+        pattern    = cfg["pattern"]
+        const_val  = cfg["const_val"]
+        period_ms  = cfg["period_ms"]
+        iters      = cfg["iters"]
+        cont_err   = cfg["cont_err"]
+
+        val_state = const_val
+        toggle_state = 0
+        incr_state = const_val & 0xFFFF
+
+        self._append_log(
+            f"Started {'WRITE' if op_write else 'READ'} @0x{addr:04X}, "
+            f"pattern={pattern}, period={period_ms} ms, iters={iters or '∞'}\n"
+        )
+
+        # warmup: respect your not-connected grace/cooldown via wrappers
+        i = 0
+        next_t = time.perf_counter()
+        while not self._stop_evt.is_set():
+            i += 1
+            if iters and i > iters:
+                break
+
+            # Determine value for write
+            if op_write:
+                if pattern == "Constant":
+                    val = const_val
+                elif pattern == "Toggle 0/1":
+                    toggle_state ^= 1
+                    val = toggle_state
+                elif pattern == "Increment":
+                    incr_state = (incr_state + 1) & 0xFFFF
+                    val = incr_state
+                else:  # Random
+                    val = random.randint(0, 0xFFFF)
+            else:
+                val = None
+
+            t0 = time.perf_counter()
+            ok = False
+            resp_val = None
+            err_msg = ""
+
+            try:
+                if op_write:
+                    ok = self._frm().mb_write_single(addr, int(val))
+                else:
+                    v = self._frm().mb_read_u16(addr)
+                    ok = (v is not None)
+                    resp_val = v
+            except Exception as e:
+                ok = False
+                err_msg = str(e)
+
+            dt_ms = (time.perf_counter() - t0) * 1000.0
+
+            # stats & log
+            self._stats["n"] += 1
+            if ok:
+                self._stats["ok"] += 1
+                self._stats["t_sum"] += dt_ms
+                if dt_ms > self._stats["t_max"]:
+                    self._stats["t_max"] = dt_ms
+            else:
+                self._stats["err"] += 1
+
+            ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            row = {
+                "time": ts,
+                "op": "WRITE" if op_write else "READ",
+                "address_hex": f"0x{addr:04X}",
+                "value_written": (val if op_write else ""),
+                "value_read": ("" if op_write else (resp_val if resp_val is not None else "")),
+                "ok": int(bool(ok)),
+                "ms": round(dt_ms, 3),
+                "error": err_msg,
+            }
+            self._log_rows.append(row)
+
+            wx.CallAfter(self._append_log,
+                         f"{ts} | {'W' if op_write else 'R'} 0x{addr:04X} "
+                         f"{('= '+str(val)) if op_write else ''} "
+                         f"{'-> '+str(resp_val) if resp_val is not None else ''} "
+                         f"| {dt_ms:.1f} ms {'OK' if ok else 'ERR'} {err_msg}\n")
+            wx.CallAfter(self._update_stats_label)
+
+            if not ok and not cont_err:
+                wx.CallAfter(self._append_log, "Stopped on first error.\n")
+                break
+
+            # pacing
+            next_t += period_ms / 1000.0
+            sleep = next_t - time.perf_counter()
+            if sleep > 0:
+                time.sleep(sleep)
+            else:
+                # we're behind; resync to now to avoid spiral
+                next_t = time.perf_counter()
+
+        wx.CallAfter(self._append_log, "Stress test stopped.\n")
+
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Main window
@@ -586,9 +1095,11 @@ class seWSNViewLayout(wx.Frame):
         self.nb = wx.Notebook(p)
         self.pageNetMon = PageNetworkMonitor(self.nb)
         self.pageMachineStatus = PageMachinestatus(self.nb)  # clean control page
+        self.pageStress = PageStressTest(self.nb)
         self.pageTerminal = PageTerminalView(self.nb)
         self.nb.AddPage(self.pageNetMon, "Machine Monitor")
         self.nb.AddPage(self.pageMachineStatus, "Machine Configuration")
+        self.nb.AddPage(self.pageStress, "Stress Test")
         self.nb.AddPage(self.pageTerminal, "Terminal View")
         self._set_notebook_tab_font(point_size_increase=6)
 
@@ -601,7 +1112,7 @@ class seWSNViewLayout(wx.Frame):
         # Bind Send menu items to generic readers by name
         b = self.Bind
         b(wx.EVT_MENU, lambda e: self.read_and_show("Serial #"),               id=ID_READ_SERIAL_NUMBER)
-        b(wx.EVT_MENU, lambda e: self.read_and_show("Inverter SN"),            id=ID_READ_INVERTER_SN)
+        # b(wx.EVT_MENU, lambda e: self.read_and_show("Inverter SN"),            id=ID_READ_INVERTER_SN)
         b(wx.EVT_MENU, lambda e: self.read_and_show("Production Date"),        id=ID_READ_PRODUCTION_DATE)
         b(wx.EVT_MENU, lambda e: self.read_and_show("Firmware Version"),       id=ID_READ_FW)
         b(wx.EVT_MENU, lambda e: self.read_and_show("HW Version"),             id=ID_READ_HW)
@@ -669,6 +1180,11 @@ class seWSNViewLayout(wx.Frame):
         except Exception:
             pass
         self.poll_timer.Stop()
+        try:
+            if hasattr(self, "pageStress"):
+                self.pageNetMon.stop_worker()
+        except Exception:
+            pass       
         self.Destroy()
 
     def OnHelp(self, _):
