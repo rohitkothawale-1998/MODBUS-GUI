@@ -903,7 +903,7 @@ class seWSNViewLayout(wx.Frame):
 
     def __init__(self, *args, **kwds):
         super().__init__(*args, **kwds)
-        self.SetTitle("REON Modbus GUI"); self.SetSize((1300, 900))
+        self.SetTitle("REON Modbus GUI"); self.Maximize(True)
         self.serial = serial.Serial(); self.serial.timeout = 1.0
         self.settings = TerminalSetup()
         self.mb: Optional[ModbusSerialClient] = None
