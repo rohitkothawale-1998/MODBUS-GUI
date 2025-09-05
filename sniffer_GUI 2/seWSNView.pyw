@@ -14,7 +14,7 @@ from serial.tools import list_ports
 import csv
 import random
 from datetime import datetime
-
+import struct
 
 import pymodbus
 from pymodbus.client import ModbusSerialClient
@@ -316,7 +316,7 @@ class PageNetworkMonitor(wx.Panel):
         self.SetSizer(root)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# NEW: Clean Machine Status page with controls
+# Machine Configuration + Firmware Upgrade
 class PageMachinestatus(wx.Panel):
     """
     Clean control panel with rows:
@@ -325,6 +325,7 @@ class PageMachinestatus(wx.Panel):
       - Buzzer Mute ON/OFF
       - Battery SOC Low Shutdown (A09B) [read/enter/write]
       - Battery Full SOC Judgment (A09D) [read/enter/write]
+      - Firmware Upgrade (Modbus start @0x0438 + XMODEM‑1K serial transfer)
     """
     def __init__(self, parent):
         super().__init__(parent=parent, id=wx.ID_ANY)
@@ -366,21 +367,9 @@ class PageMachinestatus(wx.Panel):
 
             modes.Add(row, 0, wx.ALL, 2)
 
-        add_toggle_row(
-            "ECO Mode:", "eco",
-            self._read_eco, self._set_eco_on, self._set_eco_off,
-            # "A02D EcoEn 0:OFF / 1:ON"
-        )
-        add_toggle_row(
-            "Generator Mode:", "gen",
-            self._read_gen, self._set_gen_on, self._set_gen_off,
-            # "A02B LineRangeSet 0:UPS 1:APL 2:GEN"
-        )
-        add_toggle_row(
-            "Buzzer Mute:", "mute",
-            self._read_mute, self._set_mute_on, self._set_mute_off,
-            # "A033 MuteEn 0:OFF / 1:ON"
-        )
+        add_toggle_row("ECO Mode:", "eco", self._read_eco, self._set_eco_on, self._set_eco_off)
+        add_toggle_row("Generator Mode:", "gen", self._read_gen, self._set_gen_on, self._set_gen_off)
+        add_toggle_row("Buzzer Mute:", "mute", self._read_mute, self._set_mute_on, self._set_mute_off)
 
         root.Add(modes, 0, wx.EXPAND | wx.ALL, 6)
 
@@ -391,26 +380,16 @@ class PageMachinestatus(wx.Panel):
         def add_soc_row(label: str, key: str, read_fn, write_fn):
             row = wx.BoxSizer(wx.HORIZONTAL)
             row.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
-
-            status = wx.TextCtrl(self, style=wx.TE_READONLY)
-            status.SetMinSize((120, 28))
-            self.status_boxes[key] = status
-            row.Add(status, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
-
-            sp = wx.SpinCtrl(self, min=0, max=100, initial=0)
-            sp.SetMinSize((90, 28))
+            status = wx.TextCtrl(self, style=wx.TE_READONLY); status.SetMinSize((120, 28))
+            self.status_boxes[key] = status; row.Add(status, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+            sp = wx.SpinCtrl(self, min=0, max=100, initial=0); sp.SetMinSize((90, 28))
             self.spin_boxes[key] = sp
             row.Add(wx.StaticText(self, label=" Set: "), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 2)
             row.Add(sp, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
-
-            btn_read  = wx.Button(self, label="Read")
-            btn_write = wx.Button(self, label="Write")
-            row.Add(btn_read, 0, wx.ALL, 2)
-            row.Add(btn_write, 0, wx.ALL, 2)
-
+            btn_read  = wx.Button(self, label="Read");  btn_write = wx.Button(self, label="Write")
+            row.Add(btn_read, 0, wx.ALL, 2); row.Add(btn_write, 0, wx.ALL, 2)
             btn_read.Bind(wx.EVT_BUTTON, lambda _e: read_fn(key))
             btn_write.Bind(wx.EVT_BUTTON, lambda _e: write_fn(key))
-
             soc.Add(row, 0, wx.ALL, 2)
 
         add_soc_row("Low shutdown SOC:", "soc_stop", self._read_soc_stop, self._write_soc_stop)
@@ -418,7 +397,52 @@ class PageMachinestatus(wx.Panel):
 
         root.Add(soc, 0, wx.EXPAND | wx.ALL, 6)
 
-        self.SetSizer(root)
+        # ── Group 3: Firmware Upgrade
+        fw_box = wx.StaticBox(self, wx.ID_ANY, "Firmware Upgrade")
+        fw = wx.StaticBoxSizer(fw_box, wx.VERTICAL)
+
+        row1 = wx.BoxSizer(wx.HORIZONTAL)
+        row1.Add(wx.StaticText(self, label="Firmware file (.bin):"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+        self.txt_fw_path = wx.TextCtrl(self, size=(420, 28))
+        row1.Add(self.txt_fw_path, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        btn_browse = wx.Button(self, label="Browse…"); row1.Add(btn_browse, 0, wx.ALL, 4)
+        btn_browse.Bind(wx.EVT_BUTTON, self._on_fw_browse)
+        fw.Add(row1, 0, wx.ALL, 2)
+
+        row2 = wx.BoxSizer(wx.HORIZONTAL)
+        row2.Add(wx.StaticText(self, label="Firmware type:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+        self.choice_fw_type = wx.Choice(self, choices=[
+            "General (0x0000)", "Communication Board (0x0001)", "Control Board (0x0002)"
+        ]); self.choice_fw_type.SetSelection(0); row2.Add(self.choice_fw_type, 0, wx.ALL, 4)
+
+        row2.AddSpacer(16)
+        row2.Add(wx.StaticText(self, label="Upgrade baud:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+        self.choice_fw_baud = wx.ComboBox(
+            self, choices=["Use current (0)", "9600", "19200", "38400", "57600", "115200"],
+            style=wx.CB_DROPDOWN
+        ); self.choice_fw_baud.SetSelection(5)
+        row2.Add(self.choice_fw_baud, 0, wx.ALL, 4)
+
+        self.btn_fw_start = wx.Button(self, label="Start  Transfer")
+        self.btn_fw_stop  = wx.Button(self, label="Stop")
+        row2.AddSpacer(10); row2.Add(self.btn_fw_start, 0, wx.ALL, 4); row2.Add(self.btn_fw_stop,  0, wx.ALL, 4)
+        fw.Add(row2, 0, wx.ALL, 2)
+
+        row3 = wx.BoxSizer(wx.HORIZONTAL)
+        row3.Add(wx.StaticText(self, label="Progress:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+        self.gauge_fw = wx.Gauge(self, range=100, size=(340, 20)); row3.Add(self.gauge_fw, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        fw.Add(row3, 0, wx.ALL, 2)
+
+        self.txt_fw_log = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2)
+        self.txt_fw_log.SetMinSize((-1, 140)); fw.Add(self.txt_fw_log, 0, wx.EXPAND | wx.ALL, 6)
+
+        root.Add(fw, 0, wx.EXPAND | wx.ALL, 6); self.SetSizer(root)
+
+        # wiring
+        self.btn_fw_start.Bind(wx.EVT_BUTTON, self._on_fw_start)
+        self.btn_fw_stop.Bind(wx.EVT_BUTTON, self._on_fw_stop)
+        self._fw_stop_evt = threading.Event()
+        self._fw_worker: Optional[threading.Thread] = None
 
         # Auto-refresh once when tab is created
         wx.CallAfter(self._read_eco, "eco")
@@ -448,10 +472,10 @@ class PageMachinestatus(wx.Panel):
         self._set_status_text(key, txt)
 
     def _set_gen_on(self, key):
-        if self._frm().mb_write_single(0xA02B, 2): self._read_gen(key)  # 2=Generator
+        if self._frm().mb_write_single(0xA02B, 2): self._read_gen(key)
 
     def _set_gen_off(self, key):
-        if self._frm().mb_write_single(0xA02B, 0): self._read_gen(key)  # 0=UPS (treat as OFF)
+        if self._frm().mb_write_single(0xA02B, 0): self._read_gen(key)
 
     # --------------- Mute ----------------
     def _read_mute(self, key):
@@ -468,8 +492,7 @@ class PageMachinestatus(wx.Panel):
     def _read_soc_stop(self, key):
         v = self._frm().mb_read_u16(0xA09B)
         if v is not None:
-            self._set_status_text(key, f"{v} %")
-            self.spin_boxes[key].SetValue(int(v))
+            self._set_status_text(key, f"{v} %"); self.spin_boxes[key].SetValue(int(v))
 
     def _write_soc_stop(self, key):
         val = int(self.spin_boxes[key].GetValue())
@@ -478,8 +501,7 @@ class PageMachinestatus(wx.Panel):
     def _read_soc_full(self, key):
         v = self._frm().mb_read_u16(0xA09D)
         if v is not None:
-            self._set_status_text(key, f"{v} %")
-            self.spin_boxes[key].SetValue(int(v))
+            self._set_status_text(key, f"{v} %"); self.spin_boxes[key].SetValue(int(v))
 
     def _write_soc_full(self, key):
         val = int(self.spin_boxes[key].GetValue())
@@ -490,6 +512,62 @@ class PageMachinestatus(wx.Panel):
         box = self.status_boxes.get(key)
         if box:
             box.SetValue(text)
+
+    # ───────────── Firmware Upgrade UI handlers ─────────────
+    def _on_fw_browse(self, _):
+        dlg = wx.FileDialog(self, "Select firmware file", wildcard="Binary files (*.bin)|*.bin|All files (*.*)|*.*",
+                            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+        if dlg.ShowModal() == wx.ID_OK:
+            self.txt_fw_path.SetValue(dlg.GetPath())
+        dlg.Destroy()
+
+    def _on_fw_start(self, _):
+        if self._fw_worker and self._fw_worker.is_alive():
+            wx.MessageBox("An upgrade is already in progress.", "Info", wx.OK | wx.ICON_INFORMATION); return
+        path = self.txt_fw_path.GetValue().strip()
+        if not path or not os.path.isfile(path):
+            wx.MessageBox("Please select a valid firmware .bin file.", "Input Error", wx.OK | wx.ICON_ERROR); return
+
+        sel = self.choice_fw_type.GetSelection()
+        fw_type = {0: 0x0000, 1: 0x0001, 2: 0x0002}.get(sel, 0x0000)
+
+        baud_str = self.choice_fw_baud.GetStringSelection() or "Use current (0)"
+        if "Use current" in baud_str:
+            baud_x100 = 0
+        else:
+            try:
+                baud = int(baud_str.strip()); 
+                if baud <= 0: raise ValueError
+                baud_x100 = int(round(baud / 100))
+            except Exception:
+                wx.MessageBox("Invalid baud value.", "Input Error", wx.OK | wx.ICON_ERROR); return
+
+        self._fw_stop_evt.clear(); self._set_fw_ui_enabled(False)
+        self.txt_fw_log.SetValue(""); self.gauge_fw.SetValue(0)
+
+        def log_cb(msg: str):
+            try:
+                wx.CallAfter(self.txt_fw_log.AppendText, msg)
+                wx.CallAfter(self._frm().UpdatePageTerminal, msg)
+            except Exception: pass
+
+        def prog_cb(pct: int):
+            wx.CallAfter(self.gauge_fw.SetValue, max(0, min(100, pct)))
+
+        def worker():
+            ok = self._frm().firmware_upgrade(
+                filepath=path, fw_type=fw_type, baud_x100=baud_x100,
+                log_cb=log_cb, progress_cb=prog_cb, stop_evt=self._fw_stop_evt
+            )
+            wx.CallAfter(self._set_fw_ui_enabled, True)
+            if ok:
+                wx.CallAfter(wx.MessageBox, "Firmware transfer completed.", "Success", wx.OK | wx.ICON_INFORMATION)
+
+        self._fw_worker = threading.Thread(target=worker, daemon=True); self._fw_worker.start()
+
+    def _on_fw_stop(self, _): self._fw_stop_evt.set()
+    def _set_fw_ui_enabled(self, on: bool):
+        self.btn_fw_start.Enable(on); self.btn_fw_stop.Enable(not on)
 
 class PageStressTest(wx.Panel):
     """Auto/Stress test runner for Modbus stability & FW testing."""
@@ -511,385 +589,238 @@ class PageStressTest(wx.Panel):
 
         row1.Add(wx.StaticText(self, label="Operation:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
         self.choice_op = wx.Choice(self, choices=["Read Holding (0x03)", "Write Single (0x06)"])
-        self.choice_op.SetSelection(0)
-        self.choice_op.Bind(wx.EVT_CHOICE, self._on_op_change)
+        self.choice_op.SetSelection(0); self.choice_op.Bind(wx.EVT_CHOICE, self._on_op_change)
         row1.Add(self.choice_op, 0, wx.ALL, 4)
 
         row1.AddSpacer(12)
         row1.Add(wx.StaticText(self, label="Register:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
         self.choice_reg = wx.Choice(self, choices=self._build_reg_choices())
-        self.choice_reg.SetSelection(0)
-        self.choice_reg.Bind(wx.EVT_CHOICE, self._on_reg_change)
+        self.choice_reg.SetSelection(0); self.choice_reg.Bind(wx.EVT_CHOICE, self._on_reg_change)
         row1.Add(self.choice_reg, 0, wx.ALL, 4)
 
-        self.txt_custom = wx.TextCtrl(self, value="0xA02D")
-        self.txt_custom.Enable(False)
+        self.txt_custom = wx.TextCtrl(self, value="0xA02D"); self.txt_custom.Enable(False)
         row1.Add(self.txt_custom, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
-
         root.Add(row1, 0, wx.ALL, 4)
 
         # Row 2: write value pattern
         row2 = wx.BoxSizer(wx.HORIZONTAL)
-
         self.lbl_pattern = wx.StaticText(self, label="Write pattern:")
         row2.Add(self.lbl_pattern, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
         self.choice_pattern = wx.Choice(self, choices=["Constant", "Toggle 0/1", "Increment", "Random 0..65535"])
-        self.choice_pattern.SetSelection(0)
-        self.choice_pattern.Bind(wx.EVT_CHOICE, self._on_pattern_change)
+        self.choice_pattern.SetSelection(0); self.choice_pattern.Bind(wx.EVT_CHOICE, self._on_pattern_change)
         row2.Add(self.choice_pattern, 0, wx.ALL, 4)
 
         row2.Add(wx.StaticText(self, label="Value:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
-        self.spin_value = wx.SpinCtrl(self, min=0, max=65535, initial=1)
-        row2.Add(self.spin_value, 0, wx.ALL, 4)
+        self.spin_value = wx.SpinCtrl(self, min=0, max=65535, initial=1); row2.Add(self.spin_value, 0, wx.ALL, 4)
 
         row2.AddSpacer(12)
         row2.Add(wx.StaticText(self, label="Period (ms):"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
-        self.spin_period = wx.SpinCtrl(self, min=10, max=100000, initial=100)
-        row2.Add(self.spin_period, 0, wx.ALL, 4)
+        self.spin_period = wx.SpinCtrl(self, min=10, max=100000, initial=100); row2.Add(self.spin_period, 0, wx.ALL, 4)
 
         row2.Add(wx.StaticText(self, label="Iterations (0 = ∞):"), 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
-        self.spin_iters = wx.SpinCtrl(self, min=0, max=1_000_000, initial=0)
-        row2.Add(self.spin_iters, 0, wx.ALL, 4)
+        self.spin_iters = wx.SpinCtrl(self, min=0, max=1_000_000, initial=0); row2.Add(self.spin_iters, 0, wx.ALL, 4)
 
         row2.AddSpacer(12)
-        self.chk_continue = wx.CheckBox(self, label="Continue on error")
-        self.chk_continue.SetValue(True)
+        self.chk_continue = wx.CheckBox(self, label="Continue on error"); self.chk_continue.SetValue(True)
         row2.Add(self.chk_continue, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
-
         root.Add(row2, 0, wx.ALL, 4)
 
-        # Row 3: Start/Stop + stats + Full Stress Test at far right
+        # Row 3: Start/Stop + stats + Full Stress Test
         row3 = wx.BoxSizer(wx.HORIZONTAL)
-
         self.btn_start = wx.Button(self, label="Start")
         self.btn_stop  = wx.Button(self, label="Stop")
         self.btn_clear = wx.Button(self, label="Clear Log")
         self.btn_export= wx.Button(self, label="Export CSV")
-
         self.btn_start.Bind(wx.EVT_BUTTON, self._on_start)
         self.btn_stop.Bind(wx.EVT_BUTTON,  self._on_stop)
         self.btn_clear.Bind(wx.EVT_BUTTON, self._on_clear)
         self.btn_export.Bind(wx.EVT_BUTTON, self._on_export)
-
         row3.Add(self.btn_start, 0, wx.ALL, 4)
         row3.Add(self.btn_stop,  0, wx.ALL, 4)
         row3.Add(self.btn_clear, 0, wx.ALL, 4)
         row3.Add(self.btn_export,0, wx.ALL, 4)
-
         row3.AddSpacer(16)
         self.lbl_stats = wx.StaticText(self, label="Attempts: 0 | OK: 0 | Err: 0 | Avg: 0.0 ms | Max: 0.0 ms")
         row3.Add(self.lbl_stats, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 6)
-
-        # push next control to the far right
         row3.AddStretchSpacer(1)
-
-        # Full Stress Test (blue bg, black text) at far right
         self.btn_full = wx.Button(self, label="Full Stress Test")
         self.btn_full.SetMinSize((120, 24))
         self.btn_full.SetBackgroundColour(wx.Colour(0, 122, 255))
         self.btn_full.SetForegroundColour(wx.Colour(0, 0, 0))
         self.btn_full.Bind(wx.EVT_BUTTON, self._on_full_test)
         row3.Add(self.btn_full, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.TOP | wx.BOTTOM, 4)
-
         root.Add(row3, 0, wx.EXPAND | wx.ALL, 4)
-
 
         # Log box
         self.txt_log = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2)
         self.txt_log.SetMinSize((-1, 260))
         root.Add(self.txt_log, 1, wx.EXPAND | wx.ALL, 6)
-
         self.SetSizer(root)
-        self._on_op_change(None)  # set initial enable/disable
+        self._on_op_change(None)
 
     # --------- helpers ----------
     def _frm(self): return self.GetTopLevelParent()
     def _on_full_test(self, _):
-        # don't start if a test is already running
         if self._worker and self._worker.is_alive():
-            wx.MessageBox("A stress test is already running. Stop it first.", "Info",
-                          wx.OK | wx.ICON_INFORMATION)
-            return
-        self._stop_evt.clear()
-        self._reset_stats()
-        self._worker = threading.Thread(target=self._run_full_sweep, daemon=True)
-        self._worker.start()
+            wx.MessageBox("A stress test is already running. Stop it first.", "Info", wx.OK | wx.ICON_INFORMATION); return
+        self._stop_evt.clear(); self._reset_stats()
+        self._worker = threading.Thread(target=self._run_full_sweep, daemon=True); self._worker.start()
 
     def _sleep_for(self, seconds: float):
-        """Sleep up to 'seconds', but wake quickly if user presses Stop."""
         end = time.perf_counter() + max(0.0, seconds)
         while not self._stop_evt.is_set():
             left = end - time.perf_counter()
-            if left <= 0:
-                break
+            if left <= 0: break
             time.sleep(min(0.02, left))
 
     def _run_full_sweep(self):
-        """
-        Full Stress Test:
-          • READ: for every known register (DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA),
-            perform 10 reads spaced at 10 ms; log each attempt and a per-register summary.
-          • WRITE toggles: ECO (A02D 0↔1), GEN (A02B 0↔2), MUTE (A033 0↔1),
-            wait 2s between toggles and verify by reading back.
-          • EXCLUDES Low shutdown SOC (A09B) and Full SOC judgment (A09D).
-        """
-        # ---------- READ SWEEP ----------
         regs = DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA
         wx.CallAfter(self._append_log, "=== FULL READ STRESS: each register 10 reads @10ms ===\n")
-
         for r in regs:
             if self._stop_evt.is_set(): break
-            addr = r.addr
-            tries = 10
-            ok_cnt = 0
-            t_sum = 0.0
-            t_max = 0.0
-
+            addr = r.addr; tries = 10; ok_cnt = 0; t_sum = 0.0; t_max = 0.0
             next_t = time.perf_counter()
-            for i in range(tries):
+            for _ in range(tries):
                 if self._stop_evt.is_set(): break
-
-                t0 = time.perf_counter()
-                rr = self._frm().mb_read_holding(addr, r.words)
-                dt = (time.perf_counter() - t0) * 1000.0
-                ok = rr is not None
-
-                # global stats
+                t0 = time.perf_counter(); rr = self._frm().mb_read_holding(addr, r.words)
+                dt = (time.perf_counter() - t0) * 1000.0; ok = rr is not None
                 self._stats["n"] += 1
                 if ok:
-                    self._stats["ok"] += 1
-                    self._stats["t_sum"] += dt
-                    if dt > self._stats["t_max"]:
-                        self._stats["t_max"] = dt
-                    ok_cnt += 1
-                    t_sum += dt
-                    if dt > t_max: t_max = dt
+                    self._stats["ok"] += 1; self._stats["t_sum"] += dt; ok_cnt += 1; t_sum += dt; t_max = max(t_max, dt)
                 else:
                     self._stats["err"] += 1
-
                 ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                # per-try log row
-                self._log_rows.append({
-                    "time": ts, "op": "READ", "address_hex": f"0x{addr:04X}",
-                    "value_written": "", "value_read": "",
-                    "ok": int(bool(ok)), "ms": round(dt, 3), "error": ""
-                })
-                wx.CallAfter(self._append_log,
-                             f"{ts} | R 0x{addr:04X} ({r.name}) | {dt:.1f} ms {'OK' if ok else 'ERR'}\n")
+                self._log_rows.append({"time": ts, "op": "READ", "address_hex": f"0x{addr:04X}",
+                                       "value_written": "", "value_read": "", "ok": int(bool(ok)),
+                                       "ms": round(dt, 3), "error": ""})
+                wx.CallAfter(self._append_log, f"{ts} | R 0x{addr:04X} ({r.name}) | {dt:.1f} ms {'OK' if ok else 'ERR'}\n")
                 wx.CallAfter(self._update_stats_label)
-
-                # pace at 10 ms
-                next_t += 0.010
-                slack = next_t - time.perf_counter()
-                if slack > 0:
-                    self._sleep_for(slack)
-                else:
-                    next_t = time.perf_counter()
-
-            # per-register summary
+                next_t += 0.010; slack = next_t - time.perf_counter()
+                if slack > 0: self._sleep_for(slack)
+                else: next_t = time.perf_counter()
             avg = (t_sum / ok_cnt) if ok_cnt else 0.0
             ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            summary_line = (f"{ts} | SUMMARY 0x{addr:04X} ({r.name}): "
-                            f"OK {ok_cnt}/{tries} | Avg {avg:.1f} ms | Max {t_max:.1f} ms\n")
+            summary_line = (f"{ts} | SUMMARY 0x{addr:04X} ({r.name}): OK {ok_cnt}/{tries} | Avg {avg:.1f} ms | Max {t_max:.1f} ms\n")
             wx.CallAfter(self._append_log, summary_line)
-            self._log_rows.append({
-                "time": ts, "op": "SUMMARY", "address_hex": f"0x{addr:04X}",
-                "value_written": "", "value_read": "",
-                "ok": ok_cnt, "ms": round(avg, 3), "error": f"max={t_max:.1f}ms"
-            })
-
-        # ---------- WRITE TOGGLE TESTS ----------
+            self._log_rows.append({"time": ts, "op": "SUMMARY", "address_hex": f"0x{addr:04X}",
+                                   "value_written": "", "value_read": "", "ok": ok_cnt,
+                                   "ms": round(avg, 3), "error": f"max={t_max:.1f}ms"})
         if not self._stop_evt.is_set():
             wx.CallAfter(self._append_log, "=== TOGGLE WRITE TESTS (2s interval; excludes A09B/A09D) ===\n")
-            toggles = [
-                ("ECO Mode",       0xA02D, [1, 0]),
-                ("Generator Mode", 0xA02B, [2, 0]),
-                ("Buzzer Mute",    0xA033, [1, 0]),
-            ]
+            toggles = [("ECO Mode", 0xA02D, [1, 0]), ("Generator Mode", 0xA02B, [2, 0]), ("Buzzer Mute", 0xA033, [1, 0])]
             for name, addr, seq in toggles:
                 if self._stop_evt.is_set(): break
                 for val in seq:
                     if self._stop_evt.is_set(): break
-
-                    # write
-                    t0 = time.perf_counter()
-                    okw = self._frm().mb_write_single(addr, val)
-                    dtw = (time.perf_counter() - t0) * 1000.0
-                    self._stats["n"] += 1
+                    t0 = time.perf_counter(); okw = self._frm().mb_write_single(addr, val)
+                    dtw = (time.perf_counter() - t0) * 1000.0; self._stats["n"] += 1
                     if okw:
-                        self._stats["ok"] += 1
-                        self._stats["t_sum"] += dtw
-                        if dtw > self._stats["t_max"]:
-                            self._stats["t_max"] = dtw
+                        self._stats["ok"] += 1; self._stats["t_sum"] += dtw; self._stats["t_max"] = max(self._stats["t_max"], dtw)
                     else:
                         self._stats["err"] += 1
-
                     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                    self._log_rows.append({
-                        "time": ts, "op": "WRITE", "address_hex": f"0x{addr:04X}",
-                        "value_written": val, "value_read": "",
-                        "ok": int(bool(okw)), "ms": round(dtw, 3), "error": ""
-                    })
-                    wx.CallAfter(self._append_log,
-                                 f"{ts} | W 0x{addr:04X} ({name}) = {val} | {dtw:.1f} ms {'OK' if okw else 'ERR'}\n")
+                    self._log_rows.append({"time": ts, "op": "WRITE", "address_hex": f"0x{addr:04X}",
+                                           "value_written": val, "value_read": "", "ok": int(bool(okw)),
+                                           "ms": round(dtw, 3), "error": ""})
+                    wx.CallAfter(self._append_log, f"{ts} | W 0x{addr:04X} ({name}) = {val} | {dtw:.1f} ms {'OK' if okw else 'ERR'}\n")
                     wx.CallAfter(self._update_stats_label)
-
-                    # wait ~2s before verify
                     self._sleep_for(2.0)
                     if self._stop_evt.is_set(): break
-
-                    # verify by reading back
-                    t1 = time.perf_counter()
-                    rv = self._frm().mb_read_u16(addr)
-                    dtr = (time.perf_counter() - t1) * 1000.0
-                    good = (rv == val)
-                    ts2 = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                    self._log_rows.append({
-                        "time": ts2, "op": "READ", "address_hex": f"0x{addr:04X}",
-                        "value_written": "", "value_read": (rv if rv is not None else ""),
-                        "ok": int(bool(good)), "ms": round(dtr, 3),
-                        "error": "" if good else f"Expected {val}, got {rv}"
-                    })
-                    wx.CallAfter(self._append_log,
-                                 f"{ts2} | VERIFY 0x{addr:04X} ({name}) -> {rv} | "
-                                 f"{dtr:.1f} ms {'PASS' if good else 'FAIL'} (expected {val})\n")
-
+                    t1 = time.perf_counter(); rv = self._frm().mb_read_u16(addr); dtr = (time.perf_counter() - t1) * 1000.0
+                    good = (rv == val); ts2 = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                    self._log_rows.append({"time": ts2, "op": "READ", "address_hex": f"0x{addr:04X}",
+                                           "value_written": "", "value_read": (rv if rv is not None else ""),
+                                           "ok": int(bool(good)), "ms": round(dtr, 3),
+                                           "error": "" if good else f"Expected {val}, got {rv}"})
+                    wx.CallAfter(self._append_log, f"{ts2} | VERIFY 0x{addr:04X} ({name}) -> {rv} | {dtr:.1f} ms {'PASS' if good else 'FAIL'} (expected {val})\n")
         wx.CallAfter(self._append_log, "Full stress test finished.\n")
 
     def _build_reg_choices(self):
-        # Known regs + common control regs + Custom
-        items = []
-        for r in DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA:
-            items.append(f"{r.name}  (0x{r.addr:04X})")
-        # extra controls used in your config page
-        extra = [
-            ("ECO Mode", 0xA02D),
-            ("Generator Mode", 0xA02B),
-            ("Buzzer Mute", 0xA033),
-            ("Low shutdown SOC", 0xA09B),
-            ("Full SOC judgment", 0xA09D),
-        ]
-        for name, addr in extra:
+        items = [f"{r.name}  (0x{r.addr:04X})" for r in DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA]
+        for name, addr in [("ECO Mode", 0xA02D), ("Generator Mode", 0xA02B), ("Buzzer Mute", 0xA033),
+                           ("Low shutdown SOC", 0xA09B), ("Full SOC judgment", 0xA09D)]:
             items.append(f"{name}  (0x{addr:04X})")
-        items.append("Custom…")
-        return items
+        items.append("Custom…"); return items
 
     def _resolve_address(self) -> Optional[int]:
         sel = self.choice_reg.GetStringSelection()
         if sel.endswith("Custom…"):
             s = self.txt_custom.GetValue().strip().lower()
             try:
-                if s.startswith("0x"):
-                    return int(s, 16)
-                return int(s, 10)
+                return int(s, 16) if s.startswith("0x") else int(s, 10)
             except Exception:
-                wx.MessageBox("Invalid custom address. Use hex like 0xA02D or decimal.", "Input Error",
-                              wx.OK | wx.ICON_ERROR)
-                return None
-        # parse trailing (0xXXXX)
+                wx.MessageBox("Invalid custom address. Use hex like 0xA02D or decimal.", "Input Error", wx.OK | wx.ICON_ERROR); return None
         try:
-            paren = sel.rsplit("(", 1)[1]
-            hexs = paren.strip(")")
-            return int(hexs, 16)
+            paren = sel.rsplit("(", 1)[1]; hexs = paren.strip(")"); return int(hexs, 16)
         except Exception:
             return None
 
     def _on_op_change(self, _):
         writing = self.choice_op.GetSelection() == 1
-        self.lbl_pattern.Enable(writing)
-        self.choice_pattern.Enable(writing)
-        self.spin_value.Enable(writing)
+        self.lbl_pattern.Enable(writing); self.choice_pattern.Enable(writing); self.spin_value.Enable(writing)
 
     def _on_reg_change(self, _):
         self.txt_custom.Enable(self.choice_reg.GetStringSelection().endswith("Custom…"))
 
     def _on_pattern_change(self, _):
-        # only "Constant" needs the value spin enabled; others ignore manual value
         enable = self.choice_pattern.GetStringSelection() == "Constant"
-        if self.choice_op.GetSelection() == 1:
-            self.spin_value.Enable(enable)
+        if self.choice_op.GetSelection() == 1: self.spin_value.Enable(enable)
 
     def _append_log(self, line: str):
-        try:
-            self.txt_log.AppendText(line)
-        except Exception:
-            pass
+        try: self.txt_log.AppendText(line)
+        except Exception: pass
 
     def _update_stats_label(self):
-        n = self._stats["n"]
-        ok = self._stats["ok"]
-        er = self._stats["err"]
-        avg = (self._stats["t_sum"]/ok) if ok else 0.0
-        mx  = self._stats["t_max"]
+        n = self._stats["n"]; ok = self._stats["ok"]; er = self._stats["err"]
+        avg = (self._stats["t_sum"]/ok) if ok else 0.0; mx  = self._stats["t_max"]
         self.lbl_stats.SetLabel(f"Attempts: {n} | OK: {ok} | Err: {er} | Avg: {avg:.1f} ms | Max: {mx:.1f} ms")
 
     def _reset_stats(self):
-        self._stats.update(n=0, ok=0, err=0, t_sum=0.0, t_max=0.0)
-        self._update_stats_label()
+        self._stats.update(n=0, ok=0, err=0, t_sum=0.0, t_max=0.0); self._update_stats_label()
 
     # --------- worker control ----------
     def _on_start(self, _):
         if self._worker and self._worker.is_alive():
-            wx.MessageBox("Stress test already running.", "Info", wx.OK | wx.ICON_INFORMATION)
-            return
-
+            wx.MessageBox("Stress test already running.", "Info", wx.OK | wx.ICON_INFORMATION); return
         addr = self._resolve_address()
-        if addr is None:
-            return
-
+        if addr is None: return
         op_write = (self.choice_op.GetSelection() == 1)
         pattern  = self.choice_pattern.GetStringSelection()
         const_val= int(self.spin_value.GetValue())
         period_ms= int(self.spin_period.GetValue())
         iters    = int(self.spin_iters.GetValue())
         cont_err = bool(self.chk_continue.GetValue())
-
-        self._stop_evt.clear()
-        self._reset_stats()
-        start_cfg = dict(
-            addr=addr, op_write=op_write, pattern=pattern, const_val=const_val,
-            period_ms=period_ms, iters=iters, cont_err=cont_err
-        )
+        self._stop_evt.clear(); self._reset_stats()
+        start_cfg = dict(addr=addr, op_write=op_write, pattern=pattern, const_val=const_val,
+                         period_ms=period_ms, iters=iters, cont_err=cont_err)
         self._worker = threading.Thread(target=self._run_worker, args=(start_cfg,), daemon=True)
         self._worker.start()
 
-    def _on_stop(self, _):
-        self.stop_worker()
-
+    def _on_stop(self, _): self.stop_worker()
     def stop_worker(self):
         try:
             self._stop_evt.set()
-            if self._worker and self._worker.is_alive():
-                self._worker.join(timeout=1.0)
-        except Exception:
-            pass
+            if self._worker and self._worker.is_alive(): self._worker.join(timeout=1.0)
+        except Exception: pass
 
     def _on_clear(self, _):
-        self._log_rows.clear()
-        self.txt_log.SetValue("")
-        self._reset_stats()
+        self._log_rows.clear(); self.txt_log.SetValue(""); self._reset_stats()
 
     def _on_export(self, _):
         if not self._log_rows:
-            wx.MessageBox("No log entries to export.", "Info", wx.OK | wx.ICON_INFORMATION)
-            return
+            wx.MessageBox("No log entries to export.", "Info", wx.OK | wx.ICON_INFORMATION); return
         dlg = wx.FileDialog(self, "Save CSV", wildcard="CSV files (*.csv)|*.csv",
                             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT)
-        if dlg.ShowModal() != wx.ID_OK:
-            dlg.Destroy()
-            return
-        path = dlg.GetPath()
-        dlg.Destroy()
+        if dlg.ShowModal() != wx.ID_OK: dlg.Destroy(); return
+        path = dlg.GetPath(); dlg.Destroy()
         try:
             with open(path, "w", newline="") as f:
                 w = csv.DictWriter(f, fieldnames=list(self._log_rows[0].keys()))
-                w.writeheader()
-                w.writerows(self._log_rows)
+                w.writeheader(); w.writerows(self._log_rows)
             self._append_log(f"Exported CSV to {path}\n")
         except Exception as e:
             wx.MessageBox(f"Failed to write CSV: {e}", "Error", wx.OK | wx.ICON_ERROR)
 
-    # --------- worker loop ----------
     def _run_worker(self, cfg):
         addr       = cfg["addr"]
         op_write   = cfg["op_write"]
@@ -899,202 +830,103 @@ class PageStressTest(wx.Panel):
         iters      = cfg["iters"]
         cont_err   = cfg["cont_err"]
 
-        val_state = const_val
-        toggle_state = 0
-        incr_state = const_val & 0xFFFF
-
-        self._append_log(
-            f"Started {'WRITE' if op_write else 'READ'} @0x{addr:04X}, "
-            f"pattern={pattern}, period={period_ms} ms, iters={iters or '∞'}\n"
-        )
-
-        # warmup: respect your not-connected grace/cooldown via wrappers
-        i = 0
-        next_t = time.perf_counter()
+        toggle_state = 0; incr_state = const_val & 0xFFFF
+        self._append_log(f"Started {'WRITE' if op_write else 'READ'} @0x{addr:04X}, pattern={pattern}, period={period_ms} ms, iters={iters or '∞'}\n")
+        i = 0; next_t = time.perf_counter()
         while not self._stop_evt.is_set():
             i += 1
-            if iters and i > iters:
-                break
-
-            # Determine value for write
+            if iters and i > iters: break
             if op_write:
-                if pattern == "Constant":
-                    val = const_val
-                elif pattern == "Toggle 0/1":
-                    toggle_state ^= 1
-                    val = toggle_state
-                elif pattern == "Increment":
-                    incr_state = (incr_state + 1) & 0xFFFF
-                    val = incr_state
-                else:  # Random
-                    val = random.randint(0, 0xFFFF)
+                if pattern == "Constant": val = const_val
+                elif pattern == "Toggle 0/1": toggle_state ^= 1; val = toggle_state
+                elif pattern == "Increment": incr_state = (incr_state + 1) & 0xFFFF; val = incr_state
+                else: val = random.randint(0, 0xFFFF)
             else:
                 val = None
-
-            t0 = time.perf_counter()
-            ok = False
-            resp_val = None
-            err_msg = ""
-
+            t0 = time.perf_counter(); ok = False; resp_val = None; err_msg = ""
             try:
                 if op_write:
                     ok = self._frm().mb_write_single(addr, int(val))
                 else:
-                    v = self._frm().mb_read_u16(addr)
-                    ok = (v is not None)
-                    resp_val = v
+                    v = self._frm().mb_read_u16(addr); ok = (v is not None); resp_val = v
             except Exception as e:
-                ok = False
-                err_msg = str(e)
-
+                ok = False; err_msg = str(e)
             dt_ms = (time.perf_counter() - t0) * 1000.0
-
-            # stats & log
             self._stats["n"] += 1
             if ok:
-                self._stats["ok"] += 1
-                self._stats["t_sum"] += dt_ms
-                if dt_ms > self._stats["t_max"]:
-                    self._stats["t_max"] = dt_ms
+                self._stats["ok"] += 1; self._stats["t_sum"] += dt_ms; self._stats["t_max"] = max(self._stats["t_max"], dt_ms)
             else:
                 self._stats["err"] += 1
-
             ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            row = {
-                "time": ts,
-                "op": "WRITE" if op_write else "READ",
-                "address_hex": f"0x{addr:04X}",
-                "value_written": (val if op_write else ""),
-                "value_read": ("" if op_write else (resp_val if resp_val is not None else "")),
-                "ok": int(bool(ok)),
-                "ms": round(dt_ms, 3),
-                "error": err_msg,
-            }
+            row = {"time": ts, "op": "WRITE" if op_write else "READ", "address_hex": f"0x{addr:04X}",
+                   "value_written": (val if op_write else ""), "value_read": ("" if op_write else (resp_val if resp_val is not None else "")),
+                   "ok": int(bool(ok)), "ms": round(dt_ms, 3), "error": err_msg}
             self._log_rows.append(row)
-
-            wx.CallAfter(self._append_log,
-                         f"{ts} | {'W' if op_write else 'R'} 0x{addr:04X} "
-                         f"{('= '+str(val)) if op_write else ''} "
-                         f"{'-> '+str(resp_val) if resp_val is not None else ''} "
-                         f"| {dt_ms:.1f} ms {'OK' if ok else 'ERR'} {err_msg}\n")
+            wx.CallAfter(self._append_log, f"{ts} | {'W' if op_write else 'R'} 0x{addr:04X} "
+                                           f"{('= '+str(val)) if op_write else ''} "
+                                           f"{'-> '+str(resp_val) if resp_val is not None else ''} "
+                                           f"| {dt_ms:.1f} ms {'OK' if ok else 'ERR'} {err_msg}\n")
             wx.CallAfter(self._update_stats_label)
-
             if not ok and not cont_err:
-                wx.CallAfter(self._append_log, "Stopped on first error.\n")
-                break
-
-            # pacing
-            next_t += period_ms / 1000.0
-            sleep = next_t - time.perf_counter()
-            if sleep > 0:
-                time.sleep(sleep)
-            else:
-                # we're behind; resync to now to avoid spiral
-                next_t = time.perf_counter()
-
+                wx.CallAfter(self._append_log, "Stopped on first error.\n"); break
+            next_t += period_ms / 1000.0; sleep = next_t - time.perf_counter()
+            if sleep > 0: time.sleep(sleep)
+            else: next_t = time.perf_counter()
         wx.CallAfter(self._append_log, "Stress test stopped.\n")
-
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Main window
 class seWSNViewLayout(wx.Frame):
     POLL_SECONDS_DEFAULT = 10
+    _NOT_CONNECTED_GRACE_S = 6.0
+    _NOT_CONNECTED_COOLDOWN_S = 3.0
 
-    # Popup behavior controls
-    _NOT_CONNECTED_GRACE_S = 6.0   # don't show popup during the first N seconds
-    _NOT_CONNECTED_COOLDOWN_S = 3.0  # show at most once every N seconds
-
-    # Alarm descriptions (partial)
     FAULT_DESC: Dict[int, str] = {
-        1: "Battery under voltage warning",
-        2: "Battery under voltage protection ",
-        3: "Average battery discharge current over current protection",
-        4: "Instantaneous battery discharge over current protection",
-        5: "Battery not connected ",
-        6: "Battery over voltage ",
-        7: "BMS low battery alarm",
-        8: "BMS low battery protection",
-        9: "Bypass overload protection",
-        10: "Battery output overload protection",
-        11: "Battery inverter output short circuit",
-        12: "The AC output of the battery inverter over circuit",
-        13: "The DC component of the battery inverter voltage is abnormal",
-        14: "Bus over voltage software sampling protection",
-        15: "Bus over voltage hardware sampling protection",
-        16: "Bus under voltage protection",
-        17: "Bus short circuit protection",
-        18: "The PV input voltage is over voltage",
-        20: "PV over current protection",
-        22: "The PV heat sink is overheated",
-        23: "The AC heat sink is overheated.",
-        24: "The temperature of the main transformer is overheated",
-        25: "Ac input relay short circuit",
-        27: "Fan Failure",
-        30: "Type detection error",
-        33: "Parallel control can communication is faulty",
-        34: "Parallel control can communication is faulty",
-        35: "Parallel mode is faulty ",
-        36: "Parallel current sharing fault",
-        37: "Parallel ID setting error",
-        38: "Inconsistent Battery in parallel mode",
-        39: "Inconsistent AC input source in parallel mode",
-        40: "The parallel mode synchronization fails",
-        41: "Inconsistent system firmware version in parallel mode",
-        42: "The parallel communication cable is faulty",
-        43: "Serial number error",
-        49: "BMS communication error",
-        50: "BMS other alarm",
-        51: "BMS battery over temperature",
-        52: "BMS battery over current",
-        53: "BMS battery over voltage",
-        54: "BMS battery low voltage",
-        55: "BMS battery low temperature",
-        56: "PD communication error",
-        58: "BMS pack number mismatch",
+        1: "Battery under voltage warning", 2: "Battery under voltage protection ", 3: "Average battery discharge current over current protection",
+        4: "Instantaneous battery discharge over current protection", 5: "Battery not connected ", 6: "Battery over voltage ",
+        7: "BMS low battery alarm", 8: "BMS low battery protection", 9: "Bypass overload protection",
+        10: "Battery output overload protection", 11: "Battery inverter output short circuit", 12: "The AC output of the battery inverter over circuit",
+        13: "The DC component of the battery inverter voltage is abnormal", 14: "Bus over voltage software sampling protection",
+        15: "Bus over voltage hardware sampling protection", 16: "Bus under voltage protection", 17: "Bus short circuit protection",
+        18: "The PV input voltage is over voltage", 20: "PV over current protection", 22: "The PV heat sink is overheated",
+        23: "The AC heat sink is overheated.", 24: "The temperature of the main transformer is overheated",
+        25: "Ac input relay short circuit", 27: "Fan Failure", 30: "Type detection error",
+        33: "Parallel control can communication is faulty", 34: "Parallel control can communication is faulty",
+        35: "Parallel mode is faulty ", 36: "Parallel current sharing fault", 37: "Parallel ID setting error",
+        38: "Inconsistent Battery in parallel mode", 39: "Inconsistent AC input source in parallel mode",
+        40: "The parallel mode synchronization fails", 41: "Inconsistent system firmware version in parallel mode",
+        42: "The parallel communication cable is faulty", 43: "Serial number error",
+        49: "BMS communication error", 50: "BMS other alarm", 51: "BMS battery over temperature",
+        52: "BMS battery over current", 53: "BMS battery over voltage", 54: "BMS battery low voltage",
+        55: "BMS battery low temperature", 56: "PD communication error", 58: "BMS pack number mismatch",
     }
 
     def __init__(self, *args, **kwds):
         super().__init__(*args, **kwds)
-        self.SetTitle("REON Modbus GUI")
-        self.SetSize((1300, 900))
-
-        self.serial = serial.Serial()
-        self.serial.timeout = 1.0
-
+        self.SetTitle("REON Modbus GUI"); self.SetSize((1300, 900))
+        self.serial = serial.Serial(); self.serial.timeout = 1.0
         self.settings = TerminalSetup()
         self.mb: Optional[ModbusSerialClient] = None
         self.mb_lock = threading.Lock()
         self.modbus_slave_id = 1
 
-        self.poll_timer = wx.Timer(self)
-        self.poll_period_ms = self.POLL_SECONDS_DEFAULT * 500
+        self.poll_timer = wx.Timer(self); self.poll_period_ms = self.POLL_SECONDS_DEFAULT * 500
         self.Bind(wx.EVT_TIMER, self._on_poll_timer, self.poll_timer)
 
-        # popup timing state
-        self._app_started_at = time.time()
-        self._last_not_connected_popup = 0.0
+        self._app_started_at = time.time(); self._last_not_connected_popup = 0.0
 
         seWSNMenubar(self)
 
-        # ── Top-level panel holding a header (logo) + the notebook
         p = wx.Panel(self)
-
-        # Header bar with centered logo
-        self.header = wx.Panel(p)
-        header_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.header = wx.Panel(p); header_sizer = wx.BoxSizer(wx.HORIZONTAL)
         header_sizer.AddStretchSpacer(1)
-        bmp = self._load_logo_bitmap(height_px=28)
-        self.logo_ctrl = wx.StaticBitmap(self.header, bitmap=bmp)
-        header_sizer.Add(self.logo_ctrl, 0, wx.ALL | wx.ALIGN_CENTER, 6)
-        header_sizer.AddStretchSpacer(1)
-        self.header.SetSizer(header_sizer)
-        self.header.SetMinSize((-1, bmp.GetHeight() + 10))
+        bmp = self._load_logo_bitmap(height_px=28); self.logo_ctrl = wx.StaticBitmap(self.header, bitmap=bmp)
+        header_sizer.Add(self.logo_ctrl, 0, wx.ALL | wx.ALIGN_CENTER, 6); header_sizer.AddStretchSpacer(1)
+        self.header.SetSizer(header_sizer); self.header.SetMinSize((-1, bmp.GetHeight() + 10))
 
-        # Main notebook
         self.nb = wx.Notebook(p)
         self.pageNetMon = PageNetworkMonitor(self.nb)
-        self.pageMachineStatus = PageMachinestatus(self.nb)  # clean control page
+        self.pageMachineStatus = PageMachinestatus(self.nb)
         self.pageStress = PageStressTest(self.nb)
         self.pageTerminal = PageTerminalView(self.nb)
         self.nb.AddPage(self.pageNetMon, "Machine Monitor")
@@ -1103,13 +935,10 @@ class seWSNViewLayout(wx.Frame):
         self.nb.AddPage(self.pageTerminal, "Terminal View")
         self._set_notebook_tab_font(point_size_increase=6)
 
-        # Layout: header on top, notebook fills the rest
         root_v = wx.BoxSizer(wx.VERTICAL)
         root_v.Add(self.header, 0, wx.EXPAND)
-        root_v.Add(self.nb, 1, wx.EXPAND)
-        p.SetSizer(root_v)
+        root_v.Add(self.nb, 1, wx.EXPAND); p.SetSizer(root_v)
 
-        # Bind Send menu items to generic readers by name
         b = self.Bind
         b(wx.EVT_MENU, lambda e: self.read_and_show("Serial #"),               id=ID_READ_SERIAL_NUMBER)
         # b(wx.EVT_MENU, lambda e: self.read_and_show("Inverter SN"),            id=ID_READ_INVERTER_SN)
@@ -1140,14 +969,9 @@ class seWSNViewLayout(wx.Frame):
         wx.CallAfter(self.autodetect_usb_and_connect)
 
     def _set_notebook_tab_font(self, point_size_increase=3):
-        f = self.nb.GetFont()
-        f.SetPointSize(f.GetPointSize() + int(point_size_increase))
-        self.nb.SetFont(f)
-        self.nb.Layout()
-        self.nb.Refresh()
-        self.GetChildren()[0].Layout()
+        f = self.nb.GetFont(); f.SetPointSize(f.GetPointSize() + int(point_size_increase))
+        self.nb.SetFont(f); self.nb.Layout(); self.nb.Refresh(); self.GetChildren()[0].Layout()
 
-    # Load and scale a logo; fall back to a stock bitmap if not found
     def _load_logo_bitmap(self, height_px: int = 28) -> wx.Bitmap:
         here = os.path.dirname(os.path.abspath(__file__))
         for name in ("company_logo.png", "logo.png", "logo.jpg", "logo.bmp"):
@@ -1160,12 +984,9 @@ class seWSNViewLayout(wx.Frame):
                     return wx.Bitmap(img)
         return wx.ArtProvider.GetBitmap(wx.ART_INFORMATION, wx.ART_OTHER, (height_px, height_px))
 
-    # UI helpers
     def UpdatePageTerminal(self, s):
-        try:
-            self.pageTerminal.text_ctrl_output.AppendText(str(s))
-        except Exception:
-            pass
+        try: self.pageTerminal.text_ctrl_output.AppendText(str(s))
+        except Exception: pass
 
     def OnExit(self, _): self.Close()
 
@@ -1173,33 +994,27 @@ class seWSNViewLayout(wx.Frame):
         try:
             if self.mb:
                 try:
-                    if getattr(self.mb, "connected", False):
-                        self.mb.close()
+                    if getattr(self.mb, "connected", False): self.mb.close()
                 except Exception:
                     self.mb.close()
-        except Exception:
-            pass
+        except Exception: pass
         self.poll_timer.Stop()
         try:
             if hasattr(self, "pageStress"):
-                self.pageNetMon.stop_worker()
-        except Exception:
-            pass       
+                self.pageNetMon.stop_worker()   # kept unchanged, as requested
+        except Exception: pass
         self.Destroy()
 
     def OnHelp(self, _):
-        message = (
-            "Version Information:\n\n"
-            f"pymodbus: {getattr(pymodbus, '__version__', '?')}\n"
-            f"Framer:   {_FRAMER_KW}\n"
-            "Comments: Engineering build (Modbus RTU)\n"
-        )
+        message = ("Version Information:\n\n"
+                   f"pymodbus: {getattr(pymodbus, '__version__', '?')}\n"
+                   f"Framer:   {_FRAMER_KW}\n"
+                   "Comments: Engineering build (Modbus RTU)\n")
         wx.MessageBox(message, "Help About", wx.OK | wx.ICON_INFORMATION)
 
     def OnTermSettings(self, _):
         dlg = TerminalSettingsDialog(None, -1, "", settings=self.settings)
-        dlg.ShowModal()
-        dlg.Destroy()
+        dlg.ShowModal(); dlg.Destroy()
 
     # Modbus setup
     def _parity_char(self, pyserial_parity):
@@ -1208,54 +1023,38 @@ class seWSNViewLayout(wx.Frame):
             if pyserial_parity == PARITY_NONE: return 'N'
             if pyserial_parity == PARITY_EVEN: return 'E'
             if pyserial_parity == PARITY_ODD:  return 'O'
-        except Exception:
-            pass
+        except Exception: pass
         return str(pyserial_parity or 'N')
 
     def mb_connect_from_current_settings(self):
         try:
             if self.mb:
                 try:
-                    if getattr(self.mb, "connected", False):
-                        self.mb.close()
+                    if getattr(self.mb, "connected", False): self.mb.close()
                 except Exception:
                     self.mb.close()
-        except Exception:
-            pass
-
+        except Exception: pass
         port_str = getattr(self.serial, "portstr", None) or getattr(self.serial, "port", None)
-
         if _HAS_FRAMER:
             self.mb = ModbusSerialClient(
-                port=port_str,
-                framer=FramerType.RTU,
-                baudrate=self.serial.baudrate,
-                bytesize=self.serial.bytesize,
-                parity=self._parity_char(self.serial.parity),
-                stopbits=self.serial.stopbits,
+                port=port_str, framer=FramerType.RTU,
+                baudrate=self.serial.baudrate, bytesize=self.serial.bytesize,
+                parity=self._parity_char(self.serial.parity), stopbits=self.serial.stopbits,
                 timeout=self.serial.timeout or 1.0,
             )
         else:
             self.mb = ModbusSerialClient(
-                method="rtu",
-                port=port_str,
-                baudrate=self.serial.baudrate,
-                bytesize=self.serial.bytesize,
-                parity=self._parity_char(self.serial.parity),
-                stopbits=self.serial.stopbits,
-                timeout=self.serial.timeout or 1.0,
+                method="rtu", port=port_str, baudrate=self.serial.baudrate, bytesize=self.serial.bytesize,
+                parity=self._parity_char(self.serial.parity), stopbits=self.serial.stopbits, timeout=self.serial.timeout or 1.0,
             )
-
-        ok = self.mb.connect()
-        return bool(ok)
+        ok = self.mb.connect(); return bool(ok)
 
     def OnPortSettings(self, _=None):
         try:
             dlg = wxSerialConfigDialog.SerialConfigDialog(
-                self, -1, "",
-                show=(wxSerialConfigDialog.SHOW_BAUDRATE
-                      | wxSerialConfigDialog.SHOW_FORMAT
-                      | wxSerialConfigDialog.SHOW_FLOW),
+                self, -1, "", show=(wxSerialConfigDialog.SHOW_BAUDRATE
+                                    | wxSerialConfigDialog.SHOW_FORMAT
+                                    | wxSerialConfigDialog.SHOW_FLOW),
                 serial=self.serial
             )
             if dlg.ShowModal() == wx.ID_OK:
@@ -1272,47 +1071,34 @@ class seWSNViewLayout(wx.Frame):
 
     def _update_title_connected(self):
         port_label = getattr(self.serial, "portstr", None) or getattr(self.serial, "port", "")
-        self.SetTitle(
-            f"REON Modbus GUI tool on {port_label} "
-            f"[{self.serial.baudrate},{self.serial.bytesize}{self._parity_char(self.serial.parity)}{self.serial.stopbits}]"
-        )
+        self.SetTitle(f"REON Modbus GUI tool on {port_label} "
+                      f"[{self.serial.baudrate},{self.serial.bytesize}{self._parity_char(self.serial.parity)}{self.serial.stopbits}]")
 
     # Auto-detect + connect
     def _choose_usb_port(self, ports):
         candidates = []
         for p in ports:
-            dev = (p.device or "").lower()
-            desc = (p.description or "").lower()
-            looks_usb = (
-                "usb" in desc or
-                any(x in dev for x in ["ttyusb", "ttyacm", "usbserial", "usbmodem"]) or
-                getattr(p, "vid", None) is not None
-            )
-            if not looks_usb or "bluetooth" in desc:
-                continue
+            dev = (p.device or "").lower(); desc = (p.description or "").lower()
+            looks_usb = ("usb" in desc or any(x in dev for x in ["ttyusb", "ttyacm", "usbserial", "usbmodem"]) or getattr(p, "vid", None) is not None)
+            if not looks_usb or "bluetooth" in desc: continue
             score = 0
             if any(x in dev for x in ["ttyusb", "ttyacm", "usbserial", "usbmodem"]): score += 50
             if any(x in desc for x in ["ftdi", "cp210", "ch340", "ch341", "prolific", "silicon labs", "cdc", "usb serial"]): score += 30
             if getattr(p, "vid", None) is not None: score += 10
             candidates.append((score, p))
-        if not candidates:
-            return None
-        candidates.sort(key=lambda t: t[0], reverse=True)
-        return candidates[0][1]
+        if not candidates: return None
+        candidates.sort(key=lambda t: t[0], reverse=True); return candidates[0][1]
 
     def autodetect_usb_and_connect(self):
         try:
             ports = list(list_ports.comports())
         except Exception as e:
-            self.UpdatePageTerminal(f"Auto-detect: list_ports error: {e}\n")
-            return
+            self.UpdatePageTerminal(f"Auto-detect: list_ports error: {e}\n"); return
         if not ports:
-            self.UpdatePageTerminal("Auto-detect: no serial ports found.\n")
-            return
+            self.UpdatePageTerminal("Auto-detect: no serial ports found.\n"); return
         cand = self._choose_usb_port(ports)
         if not cand:
-            self.UpdatePageTerminal("Auto-detect: no USB serial device found.\n")
-            return
+            self.UpdatePageTerminal("Auto-detect: no USB serial device found.\n"); return
 
         self.serial.port     = cand.device
         self.serial.baudrate = getattr(self.serial, "baudrate", 9600) or 9600
@@ -1332,37 +1118,24 @@ class seWSNViewLayout(wx.Frame):
     # ── Not-connected popup helpers ───────────────────────────────────────────
     def _maybe_warn_not_connected(self):
         now = time.time()
-        # Respect startup grace period and cooldown
-        if (now - self._app_started_at) < self._NOT_CONNECTED_GRACE_S:
-            return
-        if (now - self._last_not_connected_popup) < self._NOT_CONNECTED_COOLDOWN_S:
-            return
+        if (now - self._app_started_at) < self._NOT_CONNECTED_GRACE_S: return
+        if (now - self._last_not_connected_popup) < self._NOT_CONNECTED_COOLDOWN_S: return
         self._last_not_connected_popup = now
         wx.MessageBox("Modbus client is not connected.", "Error", wx.OK | wx.ICON_ERROR)
 
     # ── Modbus read/write wrappers ────────────────────────────────────────────
     def _call_read(self, method_name, address, count, unit):
-        if not self.mb:
-            return None
+        if not self.mb: return None
         fn = getattr(self.mb, method_name, None)
-        if not fn:
-            return None
-        try:
-            return fn(address=address, count=count, slave=unit)
-        except TypeError:
-            pass
-        try:
-            return fn(address=address, count=count, unit=unit)
-        except TypeError:
-            pass
-        try:
-            return fn(address=address, count=count)
-        except TypeError:
-            pass
-        try:
-            return fn(address=address)
-        except Exception:
-            return None
+        if not fn: return None
+        try: return fn(address=address, count=count, slave=unit)
+        except TypeError: pass
+        try: return fn(address=address, count=count, unit=unit)
+        except TypeError: pass
+        try: return fn(address=address, count=count)
+        except TypeError: pass
+        try: return fn(address=address)
+        except Exception: return None
 
     def _read_holding(self, address, count=1, unit=None):
         unit = unit or self.modbus_slave_id
@@ -1370,8 +1143,7 @@ class seWSNViewLayout(wx.Frame):
 
     def mb_read_holding(self, address, count=1, unit=None):
         if not self.mb:
-            self._maybe_warn_not_connected()
-            return None
+            self._maybe_warn_not_connected(); return None
         with self.mb_lock:
             rr = self._read_holding(address, count, unit)
         if rr is None:
@@ -1379,29 +1151,25 @@ class seWSNViewLayout(wx.Frame):
         try:
             if rr.isError():
                 self.UpdatePageTerminal(f"Modbus error on 0x{address:04X}: {rr}\n"); return None
-        except Exception:
-            pass
+        except Exception: pass
         if getattr(rr, "registers", None) is None:
             self.UpdatePageTerminal(f"No data returned at 0x{address:04X}: {rr}\n"); return None
         return rr.registers
 
     def mb_read_u16(self, address, unit=None) -> Optional[int]:
         regs = self.mb_read_holding(address, 1, unit)
-        if regs is None:
-            return None
+        if regs is None: return None
         return int(regs[0] & 0xFFFF)
 
     # write single (FC=06)
     def mb_write_single(self, address, value, unit=None) -> bool:
         if not self.mb:
-            self._maybe_warn_not_connected()
-            return False
+            self._maybe_warn_not_connected(); return False
         unit = unit or self.modbus_slave_id
         try:
             fn = getattr(self.mb, "write_register", None)
             if not fn:
-                self.UpdatePageTerminal("write_register not available on Modbus client.\n")
-                return False
+                self.UpdatePageTerminal("write_register not available on Modbus client.\n"); return False
             try:
                 rr = fn(address=address, value=int(value) & 0xFFFF, slave=unit)
             except TypeError:
@@ -1410,28 +1178,71 @@ class seWSNViewLayout(wx.Frame):
                 except TypeError:
                     rr = fn(address=address, value=int(value) & 0xFFFF)
         except Exception as e:
-            self.UpdatePageTerminal(f"Write error at 0x{address:04X}: {e}\n")
-            return False
-
+            self.UpdatePageTerminal(f"Write error at 0x{address:04X}: {e}\n"); return False
         try:
             if rr is None or rr.isError():
-                self.UpdatePageTerminal(f"Modbus write error at 0x{address:04X}: {rr}\n")
-                return False
-        except Exception:
-            pass
-        self.UpdatePageTerminal(f"Wrote 0x{int(value) & 0xFFFF:04X} to 0x{address:04X}\n")
+                self.UpdatePageTerminal(f"Modbus write error at 0x{address:04X}: {rr}\n"); return False
+        except Exception: pass
+        self.UpdatePageTerminal(f"Wrote 0x{int(value) & 0xFFFF:04X} to 0x{address:04X}\n"); return True
+
+    # write multiple (FC=16) — used for firmware upgrade start
+    def mb_write_multiple(self, address, values, unit=None) -> bool:
+        if not self.mb:
+            self._maybe_warn_not_connected(); return False
+        unit = unit or self.modbus_slave_id
+        vals = [int(v) & 0xFFFF for v in values]
+        try:
+            fn = getattr(self.mb, "write_registers", None)
+            if not fn:
+                self.UpdatePageTerminal("write_registers not available on Modbus client.\n"); return False
+            try:
+                rr = fn(address=address, values=vals, slave=unit)
+            except TypeError:
+                try:
+                    rr = fn(address=address, values=vals, unit=unit)
+                except TypeError:
+                    rr = fn(address=address, values=vals)
+        except Exception as e:
+            self.UpdatePageTerminal(f"Write-multiple error at 0x{address:04X}: {e}\n"); return False
+        try:
+            if rr is None or rr.isError():
+                self.UpdatePageTerminal(f"Modbus write-multiple error at 0x{address:04X}: {rr}\n"); return False
+        except Exception: pass
+        self.UpdatePageTerminal(f"Wrote {len(vals)} regs @0x{address:04X}: " f"{' '.join(f'0x{v:04X}' for v in vals)}\n")
         return True
+
+    # raw response helper + exception text (for better diagnostics in upgrade path)
+    def _write_registers_raw(self, address, values, unit=None):
+        if not self.mb:
+            self._maybe_warn_not_connected(); return None
+        unit = unit or self.modbus_slave_id
+        vals = [int(v) & 0xFFFF for v in values]
+        fn = getattr(self.mb, "write_registers", None)
+        if not fn: return None
+        try:
+            return fn(address=address, values=vals, slave=unit)
+        except TypeError:
+            try:
+                return fn(address=address, values=vals, unit=unit)
+            except TypeError:
+                return fn(address=address, values=vals)
+
+    @staticmethod
+    def _fmt_modbus_exc(rr):
+        code = getattr(rr, "exception_code", None)
+        mp = {1: "Illegal function", 2: "Illegal data address", 3: "Illegal data value",
+              4: "Slave device failure", 6: "Slave device busy", 7: "Firmware type not supported",
+              8: "Baud rate not supported"}
+        if code is None: return str(rr)
+        return f"Exception {code} ({mp.get(code,'unknown')})"
 
     # Decoders / formatters
     def _u16(self, w):  return int(w & 0xFFFF)
     def _s16(self, w):
-        v = int(w & 0xFFFF)
-        return v - 0x10000 if v & 0x8000 else v
-
+        v = int(w & 0xFFFF); return v - 0x10000 if v & 0x8000 else v
     def _u32_be(self, hi, lo): return ((hi & 0xFFFF) << 16) | (lo & 0xFFFF)
     def _s32_be(self, hi, lo):
-        u = self._u32_be(hi, lo)
-        return u - 0x1_0000_0000 if u & 0x8000_0000 else u
+        u = self._u32_be(hi, lo); return u - 0x1_0000_0000 if u & 0x8000_0000 else u
 
     def _decode(self, regs, codec):
         if not regs: return None
@@ -1462,24 +1273,19 @@ class seWSNViewLayout(wx.Frame):
 
     # ---- Active alarm helpers ----
     def _read_active_alarm_ids(self) -> List[int]:
-        # 8x16 bits starting at 0x75A5 => alarms 1..128
         regs = self.mb_read_holding(0x75A5, 8)
-        if regs is None:
-            return []
+        if regs is None: return []
         ids: List[int] = []
         for w_idx, w in enumerate(regs):
             for bit in range(16):
-                if w & (1 << bit):
-                    ids.append(w_idx * 16 + bit + 1)
+                if w & (1 << bit): ids.append(w_idx * 16 + bit + 1)
         return ids
 
     def _update_alarm_box(self):
         ids = self._read_active_alarm_ids()
-        if not hasattr(self.pageNetMon, "faults_text"):
-            return
+        if not hasattr(self.pageNetMon, "faults_text"): return
         if not ids:
-            self.pageNetMon.faults_text.SetValue("No active alarms.")
-            return
+            self.pageNetMon.faults_text.SetValue("No active alarms."); return
         lines = []
         for a in ids:
             label = self.FAULT_DESC.get(a, f"Alarm {a}")
@@ -1493,34 +1299,27 @@ class seWSNViewLayout(wx.Frame):
     def read_and_show(self, reg_name: str):
         reg = REG_BY_NAME.get(reg_name)
         if not reg:
-            self.UpdatePageTerminal(f"Unknown register '{reg_name}'\n")
-            return
+            self.UpdatePageTerminal(f"Unknown register '{reg_name}'\n"); return
         regs = self.mb_read_holding(reg.addr, reg.words)
-        if regs is None:
-            return
+        if regs is None: return
         decoded = self._decode(regs, reg.codec)
         text = self._fmt_scaled(decoded, reg.scale, reg.unit) if reg.codec != "ascii" else str(decoded)
         ctrl = self.pageNetMon.field_by_name.get(reg.name)
-        if ctrl:
-            ctrl.SetValue(text)
+        if ctrl: ctrl.SetValue(text)
         self.UpdatePageTerminal(f"{reg.name}: {text}\n")
 
     # Batch: Pull all data once
     def OnPullAll(self, _):
         if not self.mb:
-            self._maybe_warn_not_connected()
-            return
+            self._maybe_warn_not_connected(); return
         self.UpdatePageTerminal("Pulling all data...\n")
         for reg in DEVICE_DATA + RUNTIME_DATA + SUMMARY_DATA:
             try:
-                self.read_and_show(reg.name)
-                time.sleep(0.02)
+                self.read_and_show(reg.name); time.sleep(0.02)
             except Exception as e:
                 self.UpdatePageTerminal(f"Error during {reg.name}: {e}\n")
-        self._update_alarm_box()
-        self.UpdatePageTerminal("Done pulling all data.\n")
+        self._update_alarm_box(); self.UpdatePageTerminal("Done pulling all data.\n")
 
-    # Start/Stop/Clear
     def OnStartAuto(self, _=None):
         if not self.poll_timer.IsRunning():
             self.poll_timer.Start(self.poll_period_ms)
@@ -1528,17 +1327,13 @@ class seWSNViewLayout(wx.Frame):
 
     def OnStopAuto(self, _=None):
         if self.poll_timer.IsRunning():
-            self.poll_timer.Stop()
-            self.UpdatePageTerminal("Auto-poll stopped.\n")
+            self.poll_timer.Stop(); self.UpdatePageTerminal("Auto-poll stopped.\n")
 
-    def _on_poll_timer(self, _evt):
-        self.OnPullAll(None)
+    def _on_poll_timer(self, _evt): self.OnPullAll(None)
 
     def OnClearAll(self, _=None):
-        for ctrl in self.pageNetMon.field_by_name.values():
-            ctrl.SetValue("")
-        if hasattr(self.pageNetMon, "faults_text"):
-            self.pageNetMon.faults_text.SetValue("")
+        for ctrl in self.pageNetMon.field_by_name.values(): ctrl.SetValue("")
+        if hasattr(self.pageNetMon, "faults_text"): self.pageNetMon.faults_text.SetValue("")
         self.UpdatePageTerminal("Cleared all fields.\n")
 
     # Excel export
@@ -1546,18 +1341,9 @@ class seWSNViewLayout(wx.Frame):
         try:
             from openpyxl import Workbook
         except ImportError:
-            wx.MessageBox(
-                "The 'openpyxl' package is required to export Excel files.\n"
-                "Install with:  pip install openpyxl",
-                "Missing dependency", wx.OK | wx.ICON_ERROR
-            )
-            return
-
-        sections = [
-            ("Device Data", DEVICE_DATA),
-            ("Run-time Data", RUNTIME_DATA),
-            ("Summary Data", SUMMARY_DATA),
-        ]
+            wx.MessageBox("The 'openpyxl' package is required to export Excel files.\nInstall with:  pip install openpyxl",
+                          "Missing dependency", wx.OK | wx.ICON_ERROR); return
+        sections = [("Device Data", DEVICE_DATA), ("Run-time Data", RUNTIME_DATA), ("Summary Data", SUMMARY_DATA)]
         rows = [("Name", "Value")]
         for title, reg_list in sections:
             rows.append((title, ""))
@@ -1565,29 +1351,195 @@ class seWSNViewLayout(wx.Frame):
                 ctrl = self.pageNetMon.field_by_name.get(reg.name)
                 rows.append((reg.name, ctrl.GetValue() if ctrl else ""))
             rows.append(("", ""))
-
-        dlg = wx.FileDialog(
-            self, "Save data as",
-            wildcard="Excel files (*.xlsx)|*.xlsx",
-            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
-        )
-        if dlg.ShowModal() != wx.ID_OK:
-            dlg.Destroy()
-            return
-        path = dlg.GetPath()
-        dlg.Destroy()
-
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Snapshot"
+        dlg = wx.FileDialog(self, "Save data as", wildcard="Excel files (*.xlsx)|*.xlsx",
+                            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT)
+        if dlg.ShowModal() != wx.ID_OK: dlg.Destroy(); return
+        path = dlg.GetPath(); dlg.Destroy()
+        from openpyxl import Workbook
+        wb = Workbook(); ws = wb.active; ws.title = "Snapshot"
         for r, (name, value) in enumerate(rows, start=1):
-            ws.cell(row=r, column=1, value=name)
-            ws.cell(row=r, column=2, value=value)
-        ws.column_dimensions["A"].width = 28
-        ws.column_dimensions["B"].width = 40
-        ws.freeze_panes = "A2"
-        wb.save(path)
-        self.UpdatePageTerminal(f"Exported {len(rows)-1} rows to {path}\n")
+            ws.cell(row=r, column=1, value=name); ws.cell(row=r, column=2, value=value)
+        ws.column_dimensions["A"].width = 28; ws.column_dimensions["B"].width = 40; ws.freeze_panes = "A2"
+        wb.save(path); self.UpdatePageTerminal(f"Exported {len(rows)-1} rows to {path}\n")
+
+    # ───────────── Firmware upgrade orchestration ─────────────
+    def firmware_upgrade(self, filepath: str, fw_type: int, baud_x100: int,
+                         log_cb, progress_cb, stop_evt: threading.Event) -> bool:
+        """
+        1) Send Modbus upgrade start at 0x0438 with two words (order that this unit accepts).
+        2) Close Modbus, open raw serial at upgrade baud, send XMODEM‑1K.
+        3) Reconnect Modbus and restore polling.
+        Spec: start reg=1080 (0x0438), #regs=2, baud = actual/100; types 0x0000/0x0001/0x0002. :contentReference[oaicite:1]{index=1}
+        """
+        was_polling = self.poll_timer.IsRunning()
+        if was_polling: self.OnStopAuto()
+
+        port_str = getattr(self.serial, "portstr", None) or getattr(self.serial, "port", None)
+        if not port_str:
+            log_cb("No serial port is configured.\n"); return False
+        if not self.mb:
+            self._maybe_warn_not_connected(); log_cb("Not connected to Modbus; cannot send start command.\n")
+            if was_polling: self.OnStartAuto(); return False
+
+        log_cb(f"Start upgrade: port={port_str}, fw_type=0x{fw_type:04X}, baud_setting={baud_x100} (x100)\n")
+
+        def ok_rr(rr):
+            try: return rr is not None and not rr.isError()
+            except Exception: return rr is not None
+
+        def try_start_at(base_addr: int, order_fw_first: bool, use_fc16_first=True):
+            """Try combinations. order_fw_first=True sends [fw_type, baud_x100]; else [baud_x100, fw_type]."""
+            seq = [fw_type & 0xFFFF, baud_x100 & 0xFFFF] if order_fw_first else [baud_x100 & 0xFFFF, fw_type & 0xFFFF]
+            tried = []
+            orders = ["fc16","fc6"] if use_fc16_first else ["fc6","fc16"]
+            for mode in orders:
+                if mode == "fc16":
+                    rr = self._write_registers_raw(base_addr, seq)
+                    if ok_rr(rr): return True, f"Accepted (FC16 @0x{base_addr:04X}, order={'FW,Baud' if order_fw_first else 'Baud,FW'})."
+                    if rr is not None and rr.isError(): tried.append(f"FC16: {self._fmt_modbus_exc(rr)}")
+                    else: tried.append("FC16: no response")
+                else:
+                    # split writes in the same order
+                    ok1 = self.mb_write_single(base_addr, seq[0]); ok2 = (ok1 and self.mb_write_single(base_addr + 1, seq[1]))
+                    if ok1 and ok2: return True, f"Accepted (FC6x2 @0x{base_addr:04X}, order={'FW,Baud' if order_fw_first else 'Baud,FW'})."
+                    tried.append(f"FC6x2: {'OK' if ok1 and ok2 else 'failed'}")
+            return False, "; ".join(tried)
+
+        # Preferred order for this unit: [FW_TYPE, BAUD]  ← key fix
+        ok, detail = try_start_at(0x0438, order_fw_first=True, use_fc16_first=True)
+        if not ok:
+            log_cb(f"Start command rejected: {detail}\n")
+            # retry other combinations without changing the rest of your app
+            for order_fw_first in (True, False):
+                if ok: break
+                ok, detail = try_start_at(0x0438, order_fw_first=order_fw_first, use_fc16_first=False)
+                if not ok:
+                    log_cb(f"Retry at same base failed: {detail}\n")
+            if not ok:
+                for order_fw_first in (True, False):
+                    if ok: break
+                    ok, detail = try_start_at(0x0437, order_fw_first=order_fw_first, use_fc16_first=True)
+                    if not ok: log_cb(f"Alternate base rejected: {detail}\n")
+
+        if not ok:
+            # Last‑ditch “blind” fallback from the spec: if no response, you may still try sending file.
+            # We’ll probe for 'C' from bootloader. If not seen, we abort cleanly.
+            log_cb("Start not accepted by Modbus; probing for bootloader 'C' anyway…\n")
+            try:
+                up_baud = int(self.serial.baudrate) if baud_x100 == 0 else int(baud_x100 * 100)
+                ser = serial.Serial(port=port_str, baudrate=up_baud, bytesize=serial.EIGHTBITS,
+                                    parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, timeout=1.0)
+                ser.reset_input_buffer()
+                t_end = time.time() + 6.0
+                seen_c = False
+                while time.time() < t_end and not stop_evt.is_set():
+                    ch = ser.read(1)
+                    if ch and ch[0] == 0x43: seen_c = True; break
+                ser.close()
+            except Exception:
+                seen_c = False
+            if not seen_c:
+                log_cb("Bootloader not detected; aborting transfer.\n")
+                if was_polling: self.OnStartAuto()
+                return False
+            log_cb("Bootloader detected; proceeding with transfer.\n")
+        else:
+            log_cb(f"{detail}\n")
+
+        # --- proceed to transfer over raw serial ---
+        try:
+            if self.mb:
+                try:
+                    if getattr(self.mb, "connected", False): self.mb.close()
+                except Exception:
+                    self.mb.close()
+        except Exception: pass
+
+        up_baud = int(self.serial.baudrate) if baud_x100 == 0 else int(baud_x100 * 100)
+        log_cb(f"Switching to raw serial for XMODEM at {up_baud} bps…\n")
+        try:
+            ser = serial.Serial(port=port_str, baudrate=up_baud, bytesize=serial.EIGHTBITS,
+                                parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE,
+                                timeout=1.0, xonxoff=False, rtscts=False, dsrdtr=False, write_timeout=3.0)
+        except Exception as e:
+            log_cb(f"Failed to open raw serial: {e}\n")
+            self.mb_connect_from_current_settings()
+            if was_polling: self.OnStartAuto()
+            return False
+
+        try:
+            ok = self._xmodem1k_send(filepath, ser, log_cb, progress_cb, stop_evt)
+        finally:
+            try: ser.close()
+            except Exception: pass
+
+        time.sleep(0.3)
+        self.mb_connect_from_current_settings()
+        self._update_title_connected()
+        log_cb("Reconnected Modbus.\n")
+        if was_polling: self.OnStartAuto()
+        return bool(ok)
+
+    # XMODEM‑1K sender (CRC)
+    @staticmethod
+    def _crc16_xmodem(data: bytes) -> int:
+        crc = 0
+        for b in data:
+            crc ^= (b << 8) & 0xFFFF
+            for _ in range(8):
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF if (crc & 0x8000) else ((crc << 1) & 0xFFFF)
+        return crc & 0xFFFF
+
+    def _xmodem1k_send(self, filepath: str, ser: serial.Serial, log_cb, progress_cb, stop_evt: threading.Event) -> bool:
+        STX, EOT, ACK, NAK, CAN, CHR_C = 0x02, 0x04, 0x06, 0x15, 0x18, 0x43
+        try:
+            with open(filepath, "rb") as f: data = f.read()
+        except Exception as e:
+            log_cb(f"Failed to read firmware file: {e}\n"); return False
+        total_bytes = len(data)
+        if total_bytes == 0: log_cb("Firmware file is empty.\n"); return False
+
+        log_cb("Waiting for receiver ('C') from inverter bootloader…\n")
+        ser.reset_input_buffer()
+        while not stop_evt.is_set():
+            ch = ser.read(1)
+            if ch and ch[0] == CHR_C: break
+        if stop_evt.is_set(): log_cb("Upgrade aborted by user before transfer start.\n"); return False
+
+        num_pkts = (total_bytes + 1023) // 1024; progress_cb(0)
+        log_cb(f"Transferring {total_bytes} bytes in {num_pkts} packet(s)…\n")
+        pkt_no = 1
+        for i in range(num_pkts):
+            if stop_evt.is_set(): log_cb("Upgrade aborted by user.\n"); return False
+            block = data[i*1024:(i+1)*1024]
+            if len(block) < 1024: block = block + (b"\x1A" * (1024 - len(block)))
+            crc = self._crc16_xmodem(block)
+            frame = bytes([STX, pkt_no & 0xFF, 0xFF - (pkt_no & 0xFF)]) + block + struct.pack(">H", crc)
+            retries = 0
+            while not stop_evt.is_set():
+                try: ser.write(frame); ser.flush()
+                except Exception as e: log_cb(f"Serial write error: {e}\n"); return False
+                resp = ser.read(1)
+                if resp and resp[0] == ACK:
+                    progress_cb(int((i + 1) * 100 / num_pkts)); break
+                elif resp and resp[0] == NAK:
+                    retries += 1; log_cb(f"Packet {pkt_no} NAK — retry {retries}/10\n")
+                elif resp and resp[0] == CAN:
+                    log_cb("Receiver sent CAN — transfer cancelled.\n"); return False
+                else:
+                    retries += 1; log_cb(f"Packet {pkt_no} timeout — retry {retries}/10\n")
+                if retries >= 10:
+                    log_cb(f"Packet {pkt_no} failed after 10 retries.\n"); return False
+            pkt_no = (pkt_no + 1) & 0xFF
+
+        log_cb("All packets sent. Finalizing (EOT)…\n")
+        for _ in range(10):
+            ser.write(bytes([EOT])); ser.flush()
+            resp = ser.read(1)
+            if resp and resp[0] == ACK:
+                progress_cb(100); log_cb("EOT acknowledged.\n"); return True
+            time.sleep(0.3)
+        log_cb("EOT not acknowledged — transfer may have failed.\n"); return False
 
 # App
 class MyApp(wx.App):
